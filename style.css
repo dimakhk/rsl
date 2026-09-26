@@ -1,0 +1,229 @@
+/* Layout after the Figma mockup (Frame 2 / Frame 3): an 800x1280 portrait frame
+   designed for the Redmi Pad SE. Every size below is written in mockup pixels
+   times --u, so on that tablet it is 1:1 and elsewhere the whole scene scales
+   uniformly, letterboxed on black.
+
+   Motion is driven from JS springs (spring.js). The only CSS transitions are on
+   things no gesture can grab: status text, placeholder, the camera appearing. */
+
+@font-face {
+  font-family: "HS_LunaObscura";                /* SIL OFL 1.1, see fonts/OFL.txt */
+  src: url("fonts/HS_LunaObscura.otf") format("opentype");
+  font-display: block;                          /* local and tiny: never flash a fallback */
+}
+
+:root {
+  color-scheme: dark;
+  --u: min(calc(100vw / 800), calc(100vh / 1280));
+  --display: "HS_LunaObscura", system-ui, sans-serif;
+  --system: -apple-system, BlinkMacSystemFont, system-ui, "Segoe UI", Roboto, sans-serif;
+  --outline: calc(7 * var(--u));                /* the white stroke weight in the mockup */
+
+  /* Type, measured from the mockup's outlines: caps are 38.9 px tall and the
+     face's cap height is 0.78 em, so 49.86 px; tracking 0; lines 73 px apart. */
+  --type-size: calc(49.86 * var(--u));
+  --type-leading: calc(73 * var(--u));
+}
+@supports (height: 100dvh) {
+  :root { --u: min(calc(100vw / 800), calc(100dvh / 1280)); }
+}
+
+* { box-sizing: border-box; }
+
+html, body {
+  margin: 0;
+  height: 100%;
+  overflow: hidden;
+  background: #000;
+  color: #fff;
+  font-family: var(--system);
+  -webkit-font-smoothing: antialiased;
+  /* The whole screen is a gesture surface: no scroll, no double-tap zoom,
+     no selection or callout to get in the way of a double tap. */
+  touch-action: none;
+  user-select: none;
+  -webkit-user-select: none;
+  -webkit-touch-callout: none;
+  overscroll-behavior: none;
+  -webkit-tap-highlight-color: transparent;
+}
+
+.frame {
+  position: fixed;
+  inset: 0;
+  margin: auto;
+  width: calc(800 * var(--u));
+  height: calc(1280 * var(--u));
+}
+
+/* ---------- camera card: mockup rect 652 x 906 at (74, 71), stroke inside ---------- */
+
+.camera {
+  position: absolute;
+  left: calc(74 * var(--u));
+  top: calc(71 * var(--u));
+  width: calc(652 * var(--u));
+  height: calc(906 * var(--u));
+  border-radius: calc(75 * var(--u));           /* outer 75 -> inner 68, as in the mockup */
+  overflow: hidden;
+  background: #000;
+  /* Own stacking context and layer, so the video's filter and zoom are clipped
+     by the rounded corners instead of escaping them. */
+  isolation: isolate;
+  will-change: transform;
+}
+
+/* The white outline is drawn over the video, not as the card's own border.
+   With a border, the video's clipped edge and the border's inner edge are two
+   separately anti-aliased curves, and the black behind them shows through as
+   a hairline seam. Here the video runs under the outline, so the outline's
+   inner edge blends into the picture itself. */
+.camera::after {
+  content: "";
+  position: absolute;
+  inset: 0;
+  border: var(--outline) solid #fff;
+  border-radius: inherit;
+  pointer-events: none;
+}
+
+#video {
+  position: absolute;
+  inset: 0;
+  width: 100%;
+  height: 100%;
+  object-fit: cover;
+  opacity: 0;
+  transition: opacity 600ms ease;               /* first appearance only */
+  will-change: transform, filter;
+  /* First paint already looks like state A; JS takes over from here. */
+  transform: scale(-1.1, 1.1);                  /* mirrored selfie view */
+  filter: blur(20px);
+}
+#video.ready { opacity: 1; }
+
+/* ---------- start button: pill 652 x 135 at (74, 1051) ---------- */
+
+.start {
+  position: absolute;
+  left: calc(74 * var(--u));
+  top: calc(1051 * var(--u));
+  width: calc(652 * var(--u));
+  height: calc(135 * var(--u));
+  margin: 0;
+  padding: 0;
+  display: grid;
+  place-items: center;
+  border: var(--outline) solid #fff;
+  border-radius: 999px;
+  background: transparent;
+  color: #fff;
+  font-family: var(--display);
+  font-size: var(--type-size);
+  line-height: 1;
+  letter-spacing: 0;
+  cursor: pointer;
+  transform-origin: 50% 50%;
+  will-change: transform, opacity;
+}
+.start:focus { outline: none; }
+.start:focus-visible {
+  outline: calc(3 * var(--u)) solid rgba(255, 255, 255, 0.6);
+  outline-offset: calc(8 * var(--u));
+}
+/* In the mockup the caps sit 6.5 px below the pill's centre; kept as drawn. */
+.start-label {
+  position: relative;
+  top: calc(6.56 * var(--u));
+}
+
+/* ---------- recognised text: two lines, 73 apart, where the button was ---------- */
+
+.captions {
+  position: absolute;
+  left: calc(74 * var(--u));
+  width: calc(652 * var(--u));
+  top: calc(1050.55 * var(--u));
+  height: calc(2 * 73 * var(--u));
+  font-family: var(--display);
+  font-size: var(--type-size);
+  line-height: var(--type-leading);
+  letter-spacing: 0;
+  text-align: center;
+  color: #fff;
+  opacity: 0;
+  visibility: hidden;
+  pointer-events: none;
+  will-change: transform, opacity;
+}
+
+/* No clipping: a line pushed out drifts up into the gap under the camera card
+   (exactly one line tall) and dissolves there. */
+.viewport {
+  height: 100%;
+  display: flex;
+  flex-direction: column;
+  justify-content: flex-end;                    /* two lines: newest at the bottom */
+}
+.viewport.single { justify-content: center; }  /* one line: centred, where НАЧАТЬ was */
+
+.words {
+  position: relative;                           /* offsetTop of words is measured against this */
+  display: flex;
+  flex-wrap: wrap;
+  justify-content: center;
+  align-items: baseline;
+}
+
+.w {
+  max-width: 100%;
+  overflow-wrap: anywhere;
+  transform-origin: 50% 100%;
+  will-change: transform, opacity;
+}
+
+.placeholder {
+  position: absolute;
+  left: 0;
+  right: 0;
+  top: 50%;
+  transform: translateY(-50%);
+  opacity: 0.38;
+  transition: opacity 250ms ease;
+}
+.placeholder.gone { opacity: 0; }
+
+/* ---------- status + credit, in the margins above and below ---------- */
+
+.status {
+  position: absolute;
+  left: 0;
+  right: 0;
+  top: calc(22 * var(--u));
+  text-align: center;
+  font-size: calc(18 * var(--u));
+  font-weight: 500;
+  color: rgba(255, 255, 255, 0.82);
+  pointer-events: none;
+  opacity: 0;
+  transform: translateY(calc(-4 * var(--u)));
+  transition: opacity 250ms ease, transform 250ms ease;
+}
+.status.on {
+  opacity: 1;
+  transform: none;
+}
+
+.credit {
+  position: absolute;
+  left: 0;
+  right: 0;
+  bottom: calc(28 * var(--u));
+  margin: 0;
+  text-align: center;
+  font-size: calc(13 * var(--u));
+  letter-spacing: 0.01em;
+  color: #fff;
+  opacity: 0.45;
+  pointer-events: none;
+}

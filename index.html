@@ -1,0 +1,49 @@
+<!doctype html>
+<html lang="ru">
+<head>
+  <meta charset="utf-8">
+  <!-- user-scalable=no: a kiosk whose stop gesture is a double tap must not zoom on it -->
+  <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover, user-scalable=no">
+  <meta name="apple-mobile-web-app-capable" content="yes">
+  <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
+  <meta name="apple-mobile-web-app-title" content="РЖЯ">
+  <meta name="theme-color" content="#000000">
+  <title>Распознавание РЖЯ</title>
+  <link rel="manifest" href="manifest.webmanifest">
+  <link rel="apple-touch-icon" href="icon-192.png">
+  <link rel="preload" href="fonts/HS_LunaObscura.otf" as="font" type="font/otf" crossorigin>
+  <link rel="stylesheet" href="style.css">
+</head>
+<body>
+
+<!-- Laid out in the units of the Figma mockup: an 800x1280 frame, portrait.
+     One unit is one mockup pixel; see --u in style.css. -->
+<main class="frame">
+  <div id="camera" class="camera">
+    <video id="video" autoplay playsinline muted></video>
+  </div>
+
+  <button id="start" class="start" type="button" aria-label="Начать распознавание">
+    <span class="start-label">Начать</span>
+  </button>
+
+  <div id="captions" class="captions" aria-live="polite">
+    <div id="viewport" class="viewport single">
+      <div id="words" class="words"></div>
+    </div>
+    <div id="placeholder" class="placeholder" aria-hidden="true">Покажите жест</div>
+  </div>
+
+  <div id="status" class="status" role="status"></div>
+
+  <!-- Required by the CC BY-SA 4.0 licence of the model. Plain text on purpose:
+       a link on a kiosk would let a visitor navigate away. -->
+  <p id="credit" class="credit">Модель S3D · ai-forever/easy_sign · CC BY-SA 4.0</p>
+</main>
+
+<script src="vendor/ort.webgpu.min.js"></script>
+<script src="spring.js"></script>
+<script src="recognizer.js"></script>
+<script src="app.js"></script>
+</body>
+</html>
