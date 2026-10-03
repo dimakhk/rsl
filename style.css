@@ -123,17 +123,26 @@ html, body {
   bottom: 0;
   border-radius: calc(140 * var(--u)) calc(140 * var(--u)) 0 0;
   background: linear-gradient(90deg,
-    var(--red-deep) 0%, var(--red-hot) 12%, var(--red-soft) 25%, var(--red-deep) 37%,
-    var(--red-hot) 50%, var(--red-soft) 62%, var(--red-deep) 75%, var(--red-hot) 87%,
+    var(--red-deep) 0%,
+    var(--red-hot) 12.5%,
+    var(--red-soft) 25%,
+    var(--red-hot) 37.5%,
+    var(--red-deep) 50%,
+    var(--red-hot) 62.5%,
+    var(--red-soft) 75%,
+    var(--red-hot) 87.5%,
     var(--red-deep) 100%);
   filter: blur(calc(38 * var(--u)));
   animation: flow 9s linear infinite;
   will-change: transform;
 }
 
+/* The band is two identical periods side by side and slides by exactly one,
+   so the last frame of a cycle is the first frame of the next: no seam, no jump.
+   Its gradient must stay periodic - the second half a copy of the first. */
 @keyframes flow {
   from { transform: translate3d(0, 0, 0); }
-  to   { transform: translate3d(-50%, 0, 0); }   /* half the band = one full period */
+  to   { transform: translate3d(-50%, 0, 0); }
 }
 @keyframes breathe {
   from { opacity: 0.72; transform: scaleY(0.94); }
@@ -165,9 +174,17 @@ html, body {
   left: 0;
   width: 200%;
   background: linear-gradient(90deg,
-    var(--red-deep) 0%, #ffb0b0 6%, var(--red-hot) 14%, var(--red-soft) 25%, var(--red-deep) 37%,
-    var(--red-hot) 44%, #ffb0b0 50%, var(--red-hot) 56%, var(--red-soft) 70%, var(--red-deep) 82%,
-    var(--red-hot) 92%, var(--red-deep) 100%);
+    var(--red-deep) 0%,
+    var(--red-hot) 10%,
+    #ffb0b0 17%,
+    var(--red-hot) 24%,
+    var(--red-soft) 35%,
+    var(--red-deep) 50%,
+    var(--red-hot) 60%,
+    #ffb0b0 67%,
+    var(--red-hot) 74%,
+    var(--red-soft) 85%,
+    var(--red-deep) 100%);
   animation: flow 6s linear infinite;
   will-change: transform;
 }
