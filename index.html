@@ -12,35 +12,43 @@
   <link rel="manifest" href="manifest.webmanifest">
   <link rel="apple-touch-icon" href="icon-180.png">
   <link rel="icon" type="image/svg+xml" href="icon.svg">
-  <link rel="preload" href="fonts/HS_LunaObscura.otf" as="font" type="font/otf" crossorigin>
+  <link rel="preload" href="fonts/Katgru.ttf" as="font" type="font/ttf" crossorigin>
+  <link rel="preload" href="fonts/MFEvoltSpecialFree.otf" as="font" type="font/otf" crossorigin>
   <link rel="stylesheet" href="style.css">
 </head>
 <body>
 
-<!-- Laid out in the units of the Figma mockup: an 800x1280 frame, portrait.
-     One unit is one mockup pixel; see --u in style.css. -->
-<main class="frame">
-  <div id="camera" class="camera">
-    <video id="video" autoplay playsinline muted></video>
-  </div>
+<!-- After the Figma mockup: 820x1180, portrait (11" iPad Air in points).
+     The camera fills the screen; the black panel at the bottom holds the text. -->
+<div class="backdrop">
+  <video id="video" autoplay playsinline muted></video>
+</div>
 
-  <button id="start" class="start" type="button" aria-label="Начать распознавание">
-    <span class="start-label">Начать</span>
-  </button>
+<div id="glow" class="glow" aria-hidden="true">
+  <div class="glow-breath"><div class="glow-flow"></div></div>
+</div>
+<div id="rim" class="rim" aria-hidden="true"><div class="rim-flow"></div></div>
 
-  <div id="captions" class="captions" aria-live="polite">
-    <div id="viewport" class="viewport single">
-      <div id="words" class="words"></div>
+<main id="panel" class="panel">
+  <div class="slot">
+    <button id="start" class="start" type="button" aria-label="Начать распознавание">
+      <span class="start-label">начать</span>
+    </button>
+
+    <div id="captions" class="captions" aria-live="polite">
+      <div id="viewport" class="viewport single">
+        <div id="words" class="words"></div>
+      </div>
+      <div id="placeholder" class="placeholder" aria-hidden="true">покажите жест</div>
     </div>
-    <div id="placeholder" class="placeholder" aria-hidden="true">Покажите жест</div>
   </div>
-
-  <div id="status" class="status" role="status"></div>
 
   <!-- Required by the CC BY-SA 4.0 licence of the model. Plain text on purpose:
        a link on a kiosk would let a visitor navigate away. -->
   <p id="credit" class="credit">Модель S3D · ai-forever/easy_sign · CC BY-SA 4.0</p>
 </main>
+
+<div id="status" class="status" role="status"></div>
 
 <script src="vendor/ort.webgpu.min.js"></script>
 <script src="spring.js"></script>

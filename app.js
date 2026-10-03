@@ -1,9 +1,10 @@
-/* Sign recognition in two states, laid out after the Figma mockup
-   (800x1280 design units, portrait).
+/* Sign recognition, laid out after the Figma mockup (820x1180, portrait).
 
-     A  waiting  the camera card is defocused, «НАЧАТЬ» sits under it
-     B  active   the card comes into focus, recognised signs take the
-                 button's place - two lines at most
+     A  waiting   the camera behind is defocused; the black panel says «начать»
+     B  listening the picture comes into focus, a red glow lights the panel's
+                  edge, «покажите жест» at half strength
+     C  result    recognised signs replace the invitation at full strength;
+                  the glow keeps going
 
    Both states are the two ends of one spring, `scene` (0 = A, 1 = B).
    Everything on screen is a function of that single value, so an
@@ -15,8 +16,9 @@
 
 const $ = (id) => document.getElementById(id);
 
-const cameraEl = $("camera");
 const video = $("video");
+const glowEl = $("glow");
+const rimEl = $("rim");
 const startBtn = $("start");
 const captionsEl = $("captions");
 const viewportEl = $("viewport");
@@ -61,7 +63,14 @@ function renderScene(raw) {
   captionsEl.style.transform = still ? "none" : `translateY(${(10 * unit * defocus).toFixed(2)}px)`;
   captionsEl.style.visibility = co > 0.001 ? "visible" : "hidden";
 
-  creditEl.style.opacity = (0.45 * clamp01(1 - p / 0.3)).toFixed(3);
+  // The glow and the rim come up with the focus and go with it.
+  const glow = clamp01((p - 0.15) / 0.85);
+  for (const el of [glowEl, rimEl]) {
+    el.style.opacity = glow.toFixed(3);
+    el.style.visibility = glow > 0.001 ? "visible" : "hidden";
+  }
+
+  creditEl.style.opacity = (0.4 * clamp01(1 - p / 0.3)).toFixed(3);
 }
 
 function sceneTask(dt) {
@@ -89,12 +98,12 @@ const Captions = (() => {
   const words = [];                                // { el, x, y, a, out, leaving }
   const POS = { damping: 1, response: 0.4, precision: 0.1 };
   const APPEAR = { damping: 1, response: 0.4, precision: 0.002 };
-  const LINES = 2;
-  let lineHeight = 73;
+  const LINES = 1;
+  let lineHeight = 120;
 
   function measure() {
     const cs = getComputedStyle(captionsEl);
-    lineHeight = parseFloat(cs.lineHeight) || 73;
+    lineHeight = parseFloat(cs.lineHeight) || 120;
     // Words are separate flex items; the gap between them is the face's own space.
     const c = document.createElement("canvas").getContext("2d");
     c.font = `${cs.fontSize} ${cs.fontFamily}`;
@@ -157,6 +166,7 @@ const Captions = (() => {
       el.className = "w";
       el.textContent = label;
       wordsEl.appendChild(el);
+      fit(el);
       const rise = reduceMotion.matches ? 0 : lineHeight * 0.35;
       const w = {
         el,
@@ -169,6 +179,16 @@ const Captions = (() => {
       words.push(w);
       apply(w);
     });
+  }
+
+  /* A sign name wider than the panel ("домашнее животное") is set smaller
+     rather than broken over two lines. */
+  function fit(el) {
+    const room = viewportEl.clientWidth;
+    if (el.offsetWidth > room) {
+      const size = parseFloat(getComputedStyle(el).fontSize);
+      el.style.fontSize = (size * room / el.offsetWidth * 0.98).toFixed(2) + "px";
+    }
   }
 
   function removeWhere(pred) {
@@ -509,10 +529,10 @@ document.addEventListener("visibilitychange", () => {
 });
 
 function layout() {
-  unit = cameraEl.offsetWidth / 652;               // the card is 652 mockup px wide
+  unit = Math.min(innerWidth / 820, innerHeight / 1180);   // CSS px per mockup px
   // Blur spreads roughly two standard deviations past the edge; zoom the video
-  // enough inside the card that its soft, darkened rim stays out of sight.
-  const inner = Math.max(1, Math.min(cameraEl.clientWidth, cameraEl.clientHeight));
+  // enough that its soft, darkened rim stays off screen.
+  const inner = Math.max(1, Math.min(innerWidth, innerHeight));
   overscan = 1 + (4 * BLUR * unit) / inner;
   Captions.measure();
   renderScene(scene.value);
@@ -525,6 +545,9 @@ if (document.fonts && document.fonts.ready) document.fonts.ready.then(layout);
 /* The offline cache holds a whole version of the app, which is exactly what
    makes it unusable while that version is being written: every edit would be
    served from the previous copy. It is switched off on a development machine. */
+// ?rim=0 hides the thin line along the panel's edge, to compare with the glow alone.
+if (new URLSearchParams(location.search).get("rim") === "0") document.body.classList.add("no-rim");
+
 const LOCAL = ["localhost", "127.0.0.1", "::1"].includes(location.hostname);
 if ("serviceWorker" in navigator && !LOCAL) {
   addEventListener("load", () => navigator.serviceWorker.register("sw.js").catch(() => {}));
