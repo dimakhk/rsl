@@ -5,13 +5,15 @@
    Bump CACHE when anything ships: a new name means a fresh copy of everything,
    and the old one is deleted once the new version takes over. */
 
-const CACHE = "rsl-v5";
+const CACHE = "rsl-v6";
 const ASSETS = [
   "./",
   "index.html",
   "style.css",
   "spring.js",
   "recognizer.js",
+  "framer.js",
+  "pose-worker.js",
   "app.js",
   "manifest.webmanifest",
   "icon.svg",
@@ -25,6 +27,10 @@ const ASSETS = [
   "vendor/ort-wasm-simd-threaded.asyncify.wasm",
   "model/labels.json",
   "model/s3d.onnx",
+  "model/pose_landmarker_lite.task",
+  "vendor/mediapipe/vision_bundle.mjs",
+  "vendor/mediapipe/wasm/vision_wasm_internal.js",
+  "vendor/mediapipe/wasm/vision_wasm_internal.wasm",
 ];
 
 self.addEventListener("install", (e) => {

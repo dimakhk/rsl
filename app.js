@@ -105,10 +105,12 @@ const Captions = (() => {
   function measure() {
     const cs = getComputedStyle(captionsEl);
     lineHeight = parseFloat(cs.lineHeight) || 120;
-    // Words are separate flex items; the gap between them is the face's own space.
+    // Words are separate flex items. MF Evolt's own space is a narrow 0.25 em,
+    // and short signs ("я ты") ran together; the gap is at least half an em.
     const c = document.createElement("canvas").getContext("2d");
     c.font = `${cs.fontSize} ${cs.fontFamily}`;
-    wordsEl.style.columnGap = c.measureText(" ").width.toFixed(2) + "px";
+    const em = parseFloat(cs.fontSize) || 100;
+    wordsEl.style.columnGap = Math.max(c.measureText(" ").width, 0.5 * em).toFixed(2) + "px";
   }
 
   function apply(w) {
@@ -252,7 +254,7 @@ const Captions = (() => {
 /* =============================================================== status */
 
 const issues = new Map();
-const ISSUE_ORDER = ["camera", "model", "frozen", "slow"];
+const ISSUE_ORDER = ["camera", "model", "frozen", "pose", "slow"];
 
 function setIssue(key, text) {
   if (text) issues.set(key, text);
@@ -398,7 +400,11 @@ function stopCaptureLoop() {
 
 function captureFrame() {
   if (!capturing || !stream) return;
-  Recognizer.pushFrame(video, visibleCrop());
+  // The person, framed the way the model reads best (framer.js); while no one
+  // has been found yet, what is on screen.
+  Framer.update(video, performance.now());
+  Recognizer.pushFrame(video, Framer.info.crop || visibleCrop());
+  setIssue("pose", Framer.info.advice);
 }
 
 /* The model sees what the person sees: the part of the camera picture shown
@@ -421,6 +427,7 @@ function visibleCrop() {
 function beginCapture() {
   if (capturing || modelState !== "ready") return;
   capturing = true;
+  Framer.reset();
   Recognizer.start();
   // Frames and inference are the heaviest work there is. Let the transition
   // play out on a quiet main thread first; the model needs a second of video
@@ -459,6 +466,7 @@ function stop() {
   clearTimeout(captureDelay);
   stopCaptureLoop();
   Recognizer.stop();
+  setIssue("pose", null);
   goTo(false);
   buzz();
   resetTaps();
@@ -582,7 +590,10 @@ if (new URLSearchParams(location.search).has("debug")) {
     txt.textContent =
       st.top.map((t) => `${(t.p * 100).toFixed(0).padStart(3)}%  ${t.label}`).join("\n") +
       `\n${st.fps.toFixed(0)} к/с · ${Math.round(st.inferMs)} мс · шаг ${st.stride}` +
-      (r ? `\nкадр ${video.videoWidth}×${video.videoHeight}, вырезка ${r.w}×${r.h}` : "");
+      (r ? `\nкадр ${video.videoWidth}×${video.videoHeight}, вырезка ${r.w}×${r.h}` : "") +
+      `\nпоза ${Framer.info.ready ? Math.round(Framer.info.ms) + " мс" : "не загружена"}` +
+      (Framer.info.crop ? " · человек найден" : " · кадр по экрану") +
+      (Framer.info.advice ? `\n→ ${Framer.info.advice}` : "");
   }, 200);
 }
 
@@ -598,6 +609,7 @@ layout();
 openCamera();
 keepAwake();
 ensureTicker();
-// Downloading and compiling the model takes a while on a first run, so it
+// Downloading and compiling the models takes a while on a first run, so it
 // starts now rather than when someone is standing in front of the camera.
 loadModel();
+Framer.load();
