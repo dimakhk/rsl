@@ -46,7 +46,7 @@ const Recognizer = (() => {
   let lastAccepted = null;
 
   const recent = [];                             // recent inference times, ms
-  const stats = { inferMs: 0, stride: 8, fps: 0, frozen: false, ready: false };
+  const stats = { inferMs: 0, stride: 8, fps: 0, frozen: false, ready: false, top: [], crop: null };
   const recvTimes = [];
 
   let onWord = () => {};
@@ -93,8 +93,13 @@ const Recognizer = (() => {
 
   /* -------------------------------------------------------------- frames */
 
-  /* The whole picture is squashed into a square, which is how S3D was trained
-     (the reference app does the same) - not cropped, not letterboxed.
+  /* The model gets the part of the camera picture the caller names (in app.js:
+     what is visible on screen above the panel), squashed into a square.
+
+     Framing matters more than anything else here. On the lesson video, the
+     whole 16:9 frame with the signer small at one side gave 4 right words and
+     5 wrong; a crop where the signer fills the width (square or 3:4) gave 13
+     right and 4 wrong. Squashing a 3:4 crop costs nothing; empty space does.
 
      Turning a video frame into numbers means reading its pixels back from the
      GPU. Done on this thread, that read waits behind the model's own GPU work
@@ -170,19 +175,34 @@ const Recognizer = (() => {
     return grabber;
   }
 
-  function pushFrame(video) {
+  /* crop: { x, y, w, h } in the video's own pixels, or null for all of it. */
+  function cropOf(video, crop) {
+    const vw = video.videoWidth, vh = video.videoHeight;
+    if (!crop) return { x: 0, y: 0, w: vw, h: vh };
+    const x = Math.max(0, Math.min(vw - 2, Math.round(crop.x)));
+    const y = Math.max(0, Math.min(vh - 2, Math.round(crop.y)));
+    return {
+      x, y,
+      w: Math.max(2, Math.min(vw - x, Math.round(crop.w))),
+      h: Math.max(2, Math.min(vh - y, Math.round(crop.h))),
+    };
+  }
+
+  function pushFrame(video, crop) {
     if (!running || !session) return;
     if (video.readyState < 2 || !video.videoWidth) return;
+    const r = cropOf(video, crop);
+    stats.crop = r;
     if (ensureGrabber()) {
       if (inFlight >= MAX_IN_FLIGHT) return;     // behind: drop rather than pile up
       inFlight++;
-      createImageBitmap(video)
+      createImageBitmap(video, r.x, r.y, r.w, r.h)
         .then((bitmap) => grabber.postMessage({ bitmap }, [bitmap]))
         .catch(() => { inFlight = Math.max(0, inFlight - 1); });
       return;
     }
     const c = ensureCanvas();
-    c.drawImage(video, 0, 0, SIDE, SIDE);
+    c.drawImage(video, r.x, r.y, r.w, r.h, 0, 0, SIDE, SIDE);
     const f = new Float32Array(PLANE);
     file(f, local(c.getImageData(0, 0, SIDE, SIDE).data, f, SIDE));
   }
@@ -230,6 +250,16 @@ const Recognizer = (() => {
     for (let i = 0; i < logits.length; i++) if (logits[i] > max) { max = logits[i]; best = i; }
     let sum = 0;
     for (let i = 0; i < logits.length; i++) sum += Math.exp(logits[i] - max);
+    // The three most likely, for the ?debug view.
+    const order = [best];
+    for (let k = 0; k < 2; k++) {
+      let b = -1;
+      for (let i = 0; i < logits.length; i++) {
+        if (!order.includes(i) && (b < 0 || logits[i] > logits[b])) b = i;
+      }
+      order.push(b);
+    }
+    stats.top = order.map((i) => ({ label: labels[i], p: Math.exp(logits[i] - max) / sum }));
     return { index: best, confidence: 1 / sum };   // exp(max - max) = 1
   }
 

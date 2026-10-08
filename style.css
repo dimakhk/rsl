@@ -343,6 +343,31 @@ body.no-rim .rim { display: none; }
   pointer-events: none;
 }
 
+/* ---------- ?debug: what the model sees ---------- */
+
+.debug {
+  position: fixed;
+  left: calc(16 * var(--u));
+  top: calc(env(safe-area-inset-top, 0px) + 16 * var(--u));
+  padding: 8px;
+  border-radius: 12px;
+  background: rgba(0, 0, 0, 0.7);
+  pointer-events: none;
+  z-index: 10;
+}
+.debug canvas {
+  display: block;
+  width: 160px;
+  height: 160px;
+  border-radius: 6px;
+}
+.debug pre {
+  margin: 8px 0 0;
+  font: 12px/1.35 ui-monospace, Menlo, Consolas, monospace;
+  color: #fff;
+  white-space: pre;
+}
+
 @media (prefers-reduced-motion: reduce) {
   .glow-flow, .glow-breath, .rim-flow { animation: none; }
 }

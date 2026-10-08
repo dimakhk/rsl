@@ -5,7 +5,7 @@
    Bump CACHE when anything ships: a new name means a fresh copy of everything,
    and the old one is deleted once the new version takes over. */
 
-const CACHE = "rsl-v4";
+const CACHE = "rsl-v5";
 const ASSETS = [
   "./",
   "index.html",

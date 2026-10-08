@@ -18,6 +18,7 @@ const $ = (id) => document.getElementById(id);
 
 const video = $("video");
 const glowEl = $("glow");
+const panelEl = $("panel");
 const rimEl = $("rim");
 const startBtn = $("start");
 const captionsEl = $("captions");
@@ -397,7 +398,24 @@ function stopCaptureLoop() {
 
 function captureFrame() {
   if (!capturing || !stream) return;
-  Recognizer.pushFrame(video);
+  Recognizer.pushFrame(video, visibleCrop());
+}
+
+/* The model sees what the person sees: the part of the camera picture shown
+   above the panel. The video fills the screen with object-fit: cover, so most
+   of the frame's edges never reach the screen - and without this crop the
+   model got the whole frame, with the person small inside it, and recognised
+   far worse (see recognizer.js). The mirroring is symmetric, so it does not
+   change which part of the frame that is. */
+let panelTop = 0;
+
+function visibleCrop() {
+  const vw = video.videoWidth, vh = video.videoHeight;
+  const W = video.clientWidth, H = video.clientHeight;
+  if (!vw || !vh || !W || !H) return null;
+  const s = Math.max(W / vw, H / vh);
+  const ox = (W - vw * s) / 2, oy = (H - vh * s) / 2;
+  return { x: -ox / s, y: -oy / s, w: W / s, h: Math.min(H, panelTop) / s };
 }
 
 function beginCapture() {
@@ -534,6 +552,7 @@ function layout() {
   // enough that its soft, darkened rim stays off screen.
   const inner = Math.max(1, Math.min(innerWidth, innerHeight));
   overscan = 1 + (4 * BLUR * unit) / inner;
+  panelTop = panelEl.getBoundingClientRect().top;
   Captions.measure();
   renderScene(scene.value);
 }
@@ -545,6 +564,28 @@ if (document.fonts && document.fonts.ready) document.fonts.ready.then(layout);
 /* The offline cache holds a whole version of the app, which is exactly what
    makes it unusable while that version is being written: every edit would be
    served from the previous copy. It is switched off on a development machine. */
+/* ?debug shows, in a corner, exactly what the model is given and its three
+   best guesses - for checking framing and distance on the device itself. */
+if (new URLSearchParams(location.search).has("debug")) {
+  const box = document.createElement("div");
+  box.className = "debug";
+  const cv = document.createElement("canvas");
+  cv.width = cv.height = 224;
+  const txt = document.createElement("pre");
+  box.append(cv, txt);
+  document.body.append(box);
+  const c = cv.getContext("2d");
+  setInterval(() => {
+    const st = Recognizer.stats;
+    const r = st.crop;
+    if (r && video.videoWidth) c.drawImage(video, r.x, r.y, r.w, r.h, 0, 0, 224, 224);
+    txt.textContent =
+      st.top.map((t) => `${(t.p * 100).toFixed(0).padStart(3)}%  ${t.label}`).join("\n") +
+      `\n${st.fps.toFixed(0)} к/с · ${Math.round(st.inferMs)} мс · шаг ${st.stride}` +
+      (r ? `\nкадр ${video.videoWidth}×${video.videoHeight}, вырезка ${r.w}×${r.h}` : "");
+  }, 200);
+}
+
 // ?rim=0 hides the thin line along the panel's edge, to compare with the glow alone.
 if (new URLSearchParams(location.search).get("rim") === "0") document.body.classList.add("no-rim");
 
