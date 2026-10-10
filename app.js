@@ -327,22 +327,43 @@ async function loadModel() {
   try {
     await Recognizer.load((got, total) => {
       const pct = total ? Math.round(got / total * 100) : Math.round(got / 19124257 * 100);
-      setIssue("model", `Загрузка распознавания… ${Math.min(99, pct)}%`);
+      // With the server answering, the device's model is only a reserve:
+      // it loads quietly and nobody has to wait for it.
+      setIssue("model", Cloud.online ? null : `Загрузка распознавания… ${Math.min(99, pct)}%`);
     });
     modelState = "ready";
     setIssue("model", null);
     if (wantB) beginCapture();                     // pressed while it was still loading
   } catch (err) {
     modelState = "failed";
-    console.error("RSL: model failed", err);
-    setIssue("model", err && err.message === "no-webgpu"
+    modelError = err && err.message === "no-webgpu"
       ? "Устройство не поддерживает распознавание (нужен WebGPU)"
-      : "Не удалось загрузить распознавание");
+      : "Не удалось загрузить распознавание";
+    console.error("RSL: model failed", err);
+    setIssue("model", Cloud.online ? null : modelError);
   }
 }
 
+let modelError = null;
+
+/* Two recognisers, one at a time: the server's SignFlow-R while it answers
+   (cloud.js), the device's S3D otherwise. */
 Recognizer.onWord = (label) => {
+  if (capturing && !Cloud.online) Captions.add(label);
+};
+
+Cloud.onWord = (label) => {
   if (capturing) Captions.add(label);
+};
+
+Cloud.onStats = (stats) => {
+  if (stats.online) {
+    setIssue("model", null);
+    for (const k of ["frozen", "slow"]) setIssue(k, null);   // those are the device model's
+    if (wantB && !capturing) beginCapture();      // pressed before anything was ready
+  } else if (modelState === "failed") {
+    setIssue("model", modelError);                // no server and no model in the device
+  }
 };
 
 Recognizer.onStats = (stats) => {
@@ -403,9 +424,19 @@ function captureFrame() {
   // The person, framed the way the model reads best (framer.js); while no one
   // has been found yet, what is on screen.
   Framer.update(video, performance.now());
-  Recognizer.pushFrame(video, Framer.info.crop || visibleCrop());
+  const crop = Framer.info.crop || visibleCrop();
+  const cloud = Cloud.online;
+  if (cloud !== usingCloud) {                      // the server came or went: start clean
+    usingCloud = cloud;
+    if (cloud) Cloud.start();
+    else if (modelState === "ready") Recognizer.start();
+  }
+  if (cloud) Cloud.pushFrame(video, crop);
+  else if (modelState === "ready") Recognizer.pushFrame(video, crop);
   setIssue("pose", Framer.info.advice);
 }
+
+let usingCloud = null;
 
 /* The model sees what the person sees: the part of the camera picture shown
    above the panel. The video fills the screen with object-fit: cover, so most
@@ -425,10 +456,10 @@ function visibleCrop() {
 }
 
 function beginCapture() {
-  if (capturing || modelState !== "ready") return;
+  if (capturing || !(modelState === "ready" || Cloud.online)) return;
   capturing = true;
+  usingCloud = null;
   Framer.reset();
-  Recognizer.start();
   // Frames and inference are the heaviest work there is. Let the transition
   // play out on a quiet main thread first; the model needs a second of video
   // before it can say anything anyway.
@@ -456,7 +487,7 @@ async function start() {
   placeholderEl.classList.remove("gone");
   keepAwake();
   if (!stream) await openCamera();
-  if (modelState === "ready") beginCapture();
+  if (modelState === "ready" || Cloud.online) beginCapture();
   else loadModel();                                // starts capture when it lands
 }
 
@@ -466,6 +497,7 @@ function stop() {
   clearTimeout(captureDelay);
   stopCaptureLoop();
   Recognizer.stop();
+  Cloud.stop();
   setIssue("pose", null);
   goTo(false);
   buzz();
@@ -584,12 +616,14 @@ if (new URLSearchParams(location.search).has("debug")) {
   document.body.append(box);
   const c = cv.getContext("2d");
   setInterval(() => {
-    const st = Recognizer.stats;
+    const st = Cloud.online ? Cloud.stats : Recognizer.stats;
     const r = st.crop;
     if (r && video.videoWidth) c.drawImage(video, r.x, r.y, r.w, r.h, 0, 0, 224, 224);
     txt.textContent =
       st.top.map((t) => `${(t.p * 100).toFixed(0).padStart(3)}%  ${t.label}`).join("\n") +
-      `\n${st.fps.toFixed(0)} к/с · ${Math.round(st.inferMs)} мс · шаг ${st.stride}` +
+      (Cloud.online
+        ? `\nсервер · ${st.fps.toFixed(0)} к/с · модель ${st.ms} мс · задержка ${st.lag} мс`
+        : `\nустройство · ${st.fps.toFixed(0)} к/с · ${Math.round(st.inferMs)} мс · шаг ${st.stride}`) +
       (r ? `\nкадр ${video.videoWidth}×${video.videoHeight}, вырезка ${r.w}×${r.h}` : "") +
       `\nпоза ${Framer.info.ready ? Math.round(Framer.info.ms) + " мс" : "не загружена"}` +
       (Framer.info.crop ? " · человек найден" : " · кадр по экрану") +
@@ -613,3 +647,4 @@ ensureTicker();
 // starts now rather than when someone is standing in front of the camera.
 loadModel();
 Framer.load();
+Cloud.init();

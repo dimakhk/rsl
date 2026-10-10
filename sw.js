@@ -5,7 +5,7 @@
    Bump CACHE when anything ships: a new name means a fresh copy of everything,
    and the old one is deleted once the new version takes over. */
 
-const CACHE = "rsl-v6";
+const CACHE = "rsl-v7";
 const ASSETS = [
   "./",
   "index.html",
@@ -14,6 +14,7 @@ const ASSETS = [
   "recognizer.js",
   "framer.js",
   "pose-worker.js",
+  "cloud.js",
   "app.js",
   "manifest.webmanifest",
   "icon.svg",
@@ -59,6 +60,10 @@ self.addEventListener("activate", (e) => {
    network first would make every start wait for a timeout when there is none. */
 self.addEventListener("fetch", (e) => {
   if (e.request.method !== "GET") return;
+  // Where the recognition server lives may change between two openings of the
+  // app; that one file always comes from the network (and fails without one,
+  // which the app reads as "no server").
+  if (new URL(e.request.url).pathname.endsWith("/server.json")) return;
   e.respondWith((async () => {
     const hit = await caches.match(e.request, { ignoreSearch: true });
     if (hit) return hit;
