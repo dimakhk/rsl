@@ -13,6 +13,9 @@ on:
   workflow_dispatch:
   push:
     branches: [ios]
+    paths-ignore:
+      - "swift/**"                    # the app in Swift has its own workflow
+      - ".github/workflows/ios-swift.yml"
 
 permissions:
   contents: read
