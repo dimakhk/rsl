@@ -6,17 +6,73 @@ import UIKit
    the camera, the wave, the pills, the top bar, the input strip; over them
    the history screen and, at the start, the splash. */
 
+/* Where the on-screen keyboard is.
+
+   Asked three ways - the notification UIKit posts, the safe area SwiftUI
+   keeps, UIKit's keyboard layout guide - and the largest sane answer wins. */
+final class KeyboardWatcher: ObservableObject {
+    @Published private(set) var height: CGFloat = 0          // how much of the screen's bottom it covers
+    @Published private(set) var note = ""
+
+    var reduceMotion = false
+    private var fromNotice: CGFloat = 0
+    private var fromSafeArea: CGFloat = 0
+    private var fromGuide: CGFloat = 0
+    private var observer: NSObjectProtocol?
+
+    init() {
+        observer = NotificationCenter.default.addObserver(
+            forName: UIResponder.keyboardWillChangeFrameNotification, object: nil, queue: .main) { [weak self] notice in
+                guard let self = self,
+                      let end = (notice.userInfo?[UIResponder.keyboardFrameEndUserInfoKey] as? NSValue)?.cgRectValue
+                else { return }
+                let screen = UIScreen.main.bounds
+                let covered = screen.intersection(end)
+                self.fromNotice = covered.isNull || covered.maxY < screen.maxY - 1 ? 0 : covered.height
+                self.settle()
+            }
+    }
+
+    deinit {
+        if let observer = observer { NotificationCenter.default.removeObserver(observer) }
+    }
+
+    func safeArea(bottom: CGFloat) {
+        fromSafeArea = bottom
+        settle()
+    }
+
+    func guide(height: CGFloat) {
+        fromGuide = height
+        settle()
+    }
+
+    /* The home indicator's strip at the bottom is not a keyboard. */
+    static func homeInset() -> CGFloat {
+        let scenes = UIApplication.shared.connectedScenes.compactMap { $0 as? UIWindowScene }
+        let windows = scenes.flatMap { $0.windows }
+        return (windows.first { $0.isKeyWindow } ?? windows.first)?.safeAreaInsets.bottom ?? 0
+    }
+
+    private func settle() {
+        let home = KeyboardWatcher.homeInset()
+        let limit = UIScreen.main.bounds.height * 0.6
+        let next = [fromNotice, fromSafeArea, fromGuide].filter { $0 > home + 1 && $0 < limit }.max() ?? 0
+        note = String(format: "клавиатура %.0f: уведомление %.0f · зона %.0f · направляющая %.0f",
+                      Double(next), Double(fromNotice), Double(fromSafeArea), Double(fromGuide))
+        guard abs(next - height) > 0.5 else { return }
+        // The curve the keyboard itself moves on.
+        withAnimation(reduceMotion ? Motion.fade
+                      : .interpolatingSpring(mass: 3, stiffness: 1000, damping: 500, initialVelocity: 0)) {
+            height = next
+        }
+    }
+}
+
 struct RootView: View {
     @StateObject private var model = ChatModel()
+    @StateObject private var keyboard = KeyboardWatcher()
     @Environment(\.accessibilityReduceMotion) private var reduce
-    @State private var keyboard: CGFloat = 0
-    // Three ways to learn where the keyboard is; the app takes the largest sane answer.
-    @State private var fromSafeArea: CGFloat = 0
-    @State private var fromNotice: CGFloat = 0
-    @State private var fromGuide: CGFloat = 0
-
-    private let keyboardFrames = NotificationCenter.default
-        .publisher(for: UIResponder.keyboardWillChangeFrameNotification)
 
     /* The screen's own safe areas. Asked from the window, because SwiftUI's
        numbers grow by the keyboard's height while it is up. */
@@ -35,38 +91,23 @@ struct RootView: View {
             }
             screen
         }
-        .onPreferenceChange(BottomInsetKey.self) { inset in
-            fromSafeArea = inset
-            settleKeyboard()
-        }
-        .onReceive(keyboardFrames) { note in
-            guard let end = (note.userInfo?[UIResponder.keyboardFrameEndUserInfoKey] as? NSValue)?.cgRectValue else { return }
-            let screen = UIScreen.main.bounds
-            let covered = screen.intersection(end)
-            fromNotice = covered.isNull || covered.maxY < screen.maxY - 1 ? 0 : covered.height
-            settleKeyboard()
+        .onPreferenceChange(BottomInsetKey.self) { [keyboard] inset in
+            DispatchQueue.main.async { keyboard.safeArea(bottom: inset) }
         }
         // Light text in the status bar over burgundy (the splash, the camera), dark over beige.
         .preferredColorScheme(!model.splashDone || (model.mode == .gesture && !model.historyOpen) ? .dark : .light)
         .onAppear {
             model.reduceMotion = reduce
+            keyboard.reduceMotion = reduce
             model.debugShown = Launch.debug
             // Under the unit tests the app is only a host: the tests load the model themselves.
             if ProcessInfo.processInfo.environment["XCTestConfigurationFilePath"] == nil {
                 model.capture.prepare()
             }
         }
-        .onChange(of: reduce) { _, now in model.reduceMotion = now }
-    }
-
-    private func settleKeyboard() {
-        let home = RootView.windowInsets()?.bottom ?? 0
-        let limit = UIScreen.main.bounds.height * 0.6
-        let height = [fromSafeArea, fromNotice, fromGuide].filter { $0 > home + 1 && $0 < limit }.max() ?? 0
-        guard abs(height - keyboard) > 0.5 else { return }
-        // The curve the keyboard itself moves on.
-        withAnimation(reduce ? Motion.fade : .interpolatingSpring(mass: 3, stiffness: 1000, damping: 500, initialVelocity: 0)) {
-            keyboard = height
+        .onChange(of: reduce) { _, now in
+            model.reduceMotion = now
+            keyboard.reduceMotion = now
         }
     }
 
@@ -79,13 +120,8 @@ struct RootView: View {
             let m = Metrics(size: size, safeTop: top, safeBottom: bottom)
             ZStack {
                 Palette.beige
-                KeyboardGuide { height in
-                    fromGuide = height
-                    settleKeyboard()
-                }
-                PhoneView(model: model, keyboard: keyboard,
-                          keyboardNote: String(format: "клавиатура %.0f: зона %.0f · уведомление %.0f · направляющая %.0f",
-                                               keyboard, fromSafeArea, fromNotice, fromGuide))
+                KeyboardGuide { [keyboard] height in keyboard.guide(height: height) }
+                PhoneView(model: model, keyboard: keyboard)
                     .frame(width: m.width, height: m.height)
                     .clipped()
                     .coordinateSpace(name: "phone")
@@ -150,8 +186,7 @@ private struct BottomInsetKey: PreferenceKey {
 
 struct PhoneView: View {
     @ObservedObject var model: ChatModel
-    let keyboard: CGFloat
-    var keyboardNote = ""
+    @ObservedObject var keyboard: KeyboardWatcher
     @Environment(\.metrics) private var m
     @Environment(\.accessibilityReduceMotion) private var reduce
     @State private var barHeight: CGFloat = 36
@@ -177,7 +212,7 @@ struct PhoneView: View {
             })
 
             if model.debugShown {
-                DebugBox(model: model, keyboardNote: keyboardNote)
+                DebugBox(model: model, keyboardNote: keyboard.note)
                     .place(x: 8 * u, y: m.top + 50 * u, width: 300 * u, height: 150 * u)
                     .allowsHitTesting(false)
             }
@@ -197,7 +232,7 @@ struct PhoneView: View {
         // How far the feed's bottom edge stands off the bottom of the screen.
         var feedBottom = m.bottom + 83 * u                       // above the pills
         if model.mode == .voice { feedBottom = m.bottom + 131 * u }      // above the wave
-        if keys { feedBottom = keyboard + barHeight + 6 * u }
+        if keys { feedBottom = keyboard.height + barHeight + 6 * u }
         let feedHeight = max(0, m.height - feedTop - feedBottom)
         let waveHeight = m.bottom + 121 * u                      // its crests reach y 697
 
@@ -239,7 +274,7 @@ struct PhoneView: View {
 
             KeyboardBar(model: model, barHeight: $barHeight)
                 .frame(width: m.width, height: m.height, alignment: .bottom)
-                .offset(y: -keyboard + (keys || reduce ? 0 : 1.15 * barHeight + 80 * u))
+                .offset(y: -keyboard.height + (keys || reduce ? 0 : 1.15 * barHeight + 80 * u))
                 .opacity(reduce && !keys ? 0 : 1)
                 .animation(Motion.pick(Motion.soft, reduce: reduce), value: model.mode)
                 .accessibilityHidden(!keys)
