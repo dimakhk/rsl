@@ -1,612 +1,952 @@
-/* Sign recognition, laid out after the Figma mockup (820x1180, portrait).
+/* The chat interface (Figma mockup 393x852).
 
-     A  waiting   the camera behind is defocused; the black panel says «начать»
-     B  listening the picture comes into focus, a red glow lights the panel's
-                  edge, «покажите жест» at half strength
-     C  result    recognised signs replace the invitation at full strength;
-                  the glow keeps going
+   Screens: splash -> start (empty chat) -> gestures | voice | keyboard,
+   plus the history screen that slides over them.
 
-   Both states are the two ends of one spring, `scene` (0 = A, 1 = B).
-   Everything on screen is a function of that single value, so an
-   interruption in either direction is continuous by construction: retarget
-   the spring and the whole picture turns around from wherever it is.
+   What is real: the camera, sign recognition and the hints about where to
+   stand (capture.js). What is only drawn for now, and marked TODO below:
+   speech recognition, speaking the text aloud, saving what is typed, and the
+   chat history.
 
-   Recognition happens in this device (recognizer.js). There is no server:
-   once the app has been opened with a connection, it works without one. */
+   Motion: every transition is a spring (spring.js) that writes transform and
+   opacity - directly, or through a custom property the stylesheet reads.
+   With "reduce motion" on, the same values are reached by a 150 ms fade. */
 
 const $ = (id) => document.getElementById(id);
-
-const video = $("video");
-const glowEl = $("glow");
-const panelEl = $("panel");
-const rimEl = $("rim");
-const startBtn = $("start");
-const captionsEl = $("captions");
-const viewportEl = $("viewport");
-const wordsEl = $("words");
-const placeholderEl = $("placeholder");
-const statusEl = $("status");
-const creditEl = $("credit");
-
-const reduceMotion = matchMedia("(prefers-reduced-motion: reduce)");
+const params = new URLSearchParams(location.search);
+const reduce = matchMedia("(prefers-reduced-motion: reduce)");
 const clamp01 = (v) => Math.min(1, Math.max(0, v));
+const lerp = (a, b, t) => a + (b - a) * t;
 
-/* ================================================================ scene */
+if (params.has("sim")) document.documentElement.classList.add("sim");
 
-const BLUR = 20;                                  // defocus in state A, design units
-const scene = new Spring(0, { damping: 1, response: 0.4 });   // 0 = A, 1 = B
-let wantB = false;                                // where the scene is headed
-let unit = 1;                                     // CSS px per design unit
-let overscan = 1.1;                               // zoom that keeps the blur's soft rim hidden
+const phone = $("phone");
+const chat = $("chat");
+const camera = $("camera");
+const camGlow = $("camGlow");
+const video = $("video");
+const plaque = $("plaque");
+const plaqueText = $("plaqueText");
+const feed = $("feed");
+const feedInner = $("feedInner");
+const intro = $("intro");
+const wave = $("wave");
+const dock = $("dock");
+const kbar = $("kbar");
+const kbarInput = $("kbarInput");
+const kbdSim = $("kbdSim");
+const historyEl = $("history");
+const splash = $("splash");
 
-function renderScene(raw) {
-  const p = clamp01(raw);
-  const defocus = 1 - p;
-  const still = reduceMotion.matches;
+let U = 1;                                         // CSS px per mockup point
+const measure = () => { U = phone.clientWidth / 393; };
+measure();
 
-  // Lens: blur and a touch of zoom travel together inside the card, so it
-  // reads as focus being pulled rather than a filter being switched. At rest
-  // in B the filter is removed altogether, which also takes its GPU cost away.
-  const blur = BLUR * unit * defocus;
-  video.style.filter = blur > 0.05 ? `blur(${blur.toFixed(2)}px)` : "none";
-  const s = still ? overscan : 1 + (overscan - 1) * defocus;
-  video.style.transform = `scale(${(-s).toFixed(4)}, ${s.toFixed(4)})`;   // mirrored selfie
+/* ============================================================== motion */
 
-  // The button and the text share one spot. They cross through empty rather
-  // than overlapping: the button is gone by p = 0.5, the text starts there.
-  const bo = clamp01(1 - p / 0.5);
-  startBtn.style.opacity = bo.toFixed(3);
-  startBtn.style.transform = still ? "none" : `scale(${(1 - 0.08 * p).toFixed(4)})`;
-  startBtn.style.visibility = bo > 0.001 ? "visible" : "hidden";
-
-  const co = clamp01((p - 0.5) / 0.5);
-  captionsEl.style.opacity = co.toFixed(3);
-  captionsEl.style.transform = still ? "none" : `translateY(${(10 * unit * defocus).toFixed(2)}px)`;
-  captionsEl.style.visibility = co > 0.001 ? "visible" : "hidden";
-
-  // The glow and the rim come up with the focus and go with it.
-  const glow = clamp01((p - 0.15) / 0.85);
-  for (const el of [glowEl, rimEl]) {
-    el.style.opacity = glow.toFixed(3);
-    el.style.visibility = glow > 0.001 ? "visible" : "hidden";
-  }
-
-  creditEl.style.opacity = (0.4 * clamp01(1 - p / 0.3)).toFixed(3);
+/* Runs a spring and hands every value to `render`. Returns go(target, kick):
+   retargeting mid-flight keeps the velocity, so anything can be interrupted.
+   Reduced motion: a short linear fade to the target instead. */
+function drive(spring, render, onRest) {
+  let running = false;
+  let fade = null;                                 // { from, to, t } while fading
+  const task = (dt) => {
+    if (fade) {
+      fade.t += dt / 0.15;
+      spring.value = lerp(fade.from, fade.to, clamp01(fade.t));
+      spring.velocity = 0;
+      if (fade.t >= 1) fade = null;
+    } else {
+      spring.step(dt);
+    }
+    render(spring.value);
+    if (!fade && spring.settled) {
+      running = false;
+      if (onRest) onRest(spring.value);
+      return false;
+    }
+    return true;
+  };
+  const go = (target, kick = 0) => {
+    spring.to(target);
+    if (reduce.matches) fade = { from: spring.value, to: target, t: 0 };
+    else spring.velocity += kick;
+    if (!running) {
+      running = true;
+      Animator.run(task);
+    }
+  };
+  go.spring = spring;
+  go.render = () => render(spring.value);
+  return go;
 }
 
-function sceneTask(dt) {
-  scene.step(dt);
-  renderScene(scene.value);
-  if (scene.settled && !wantB) Captions.clear(false);   // at rest in A: drop the old text
-  return !scene.settled;
+const SOFT = { damping: 1, response: 0.4 };        // settles without overshoot
+const SCREEN = { damping: 1, response: 0.5 };      // the big moves between screens
+const BOUNCY = { damping: 0.6, response: 0.35 };   // a little overshoot
+
+/* ============================================================== top bar */
+
+function twoTone(inner) {
+  return `<span class="tb-press"><span class="tb-dark">${inner}</span><span class="tb-light">${inner}</span></span>`;
 }
 
-function goTo(b) {
-  wantB = b;
-  const target = b ? 1 : 0;
-  scene.to(target);
-  // A tap is an impulse, so the very first frame already moves. Proportional
-  // to the distance left and well below the critical value 2π/response, so a
-  // critically damped spring still cannot overshoot.
-  scene.velocity += (b ? 1 : -1) * 5 * Math.abs(target - scene.value);
-  startBtn.style.pointerEvents = b ? "none" : "auto";
-  Animator.run(sceneTask);
+$("btnHistory").innerHTML = twoTone(icon("history"));
+$("btnSound").innerHTML = twoTone(`<span class="snd">${icon("sound-on", "snd-on")}${icon("sound-off", "snd-off")}</span>`);
+$("histPlus").innerHTML = icon("plus");
+$("histClose").innerHTML = icon("close");
+$("kbarClose").innerHTML = icon("close");
+
+const state = {
+  mode: "idle",                                    // idle | gesture | voice | keys
+  gestureOn: false,                                // recognition running (not paused)
+  micOn: false,
+  sound: true,
+  historyOpen: false,
+  before: "idle",                                  // where the keyboard was opened from
+  chats: ["Чат #1", "Чат #2", "Чат #3", "Чат #4"], // TODO: функция будет добавлена позже (заглушки)
+  current: 0,
+};
+
+function setTitle(text) {
+  for (const el of $("title").children) el.textContent = text;
 }
 
-/* ============================================================= captions */
-
-const Captions = (() => {
-  const words = [];                                // { el, x, y, a, out, leaving }
-  const POS = { damping: 1, response: 0.4, precision: 0.1 };
-  const APPEAR = { damping: 1, response: 0.4, precision: 0.002 };
-  const LINES = 1;
-  let lineHeight = 120;
-
-  function measure() {
-    const cs = getComputedStyle(captionsEl);
-    lineHeight = parseFloat(cs.lineHeight) || 120;
-    // Words are separate flex items. MF Evolt's own space is a narrow 0.25 em,
-    // and short signs ("я ты") ran together; the gap is at least half an em.
-    const c = document.createElement("canvas").getContext("2d");
-    c.font = `${cs.fontSize} ${cs.fontFamily}`;
-    const em = parseFloat(cs.fontSize) || 100;
-    wordsEl.style.columnGap = Math.max(c.measureText(" ").width, 0.5 * em).toFixed(2) + "px";
-  }
-
-  function apply(w) {
-    const a = clamp01(w.a.value);
-    const s = reduceMotion.matches ? 1 : 0.94 + 0.06 * a;
-    w.el.style.opacity = a.toFixed(3);
-    w.el.style.transform =
-      `translate3d(${w.x.value.toFixed(2)}px, ${w.y.value.toFixed(2)}px, 0) scale(${s.toFixed(4)})`;
-  }
-
-  /* Only the newest LINES rows stay. One row sits centred where the button was;
-     from two rows on the block is bottom-anchored, and a row pushed above them
-     rises and dissolves on its own spring. */
-  function updateRows() {
-    const live = words.filter((w) => !w.leaving);
-    const tops = [...new Set(live.map((w) => w.el.offsetTop))].sort((a, b) => a - b);
-    for (const w of live) {
-      const out = tops.indexOf(w.el.offsetTop) < tops.length - LINES;
-      if (out !== w.out) {
-        w.out = out;
-        w.a.to(out ? 0 : 1);
-      }
-    }
-    // Moves rows vertically, never changes which words share a row.
-    viewportEl.classList.toggle("single", tops.length <= 1);
-  }
-
-  /* FLIP with springs: note where every word is on screen, change the DOM,
-     then offset each word back to where it was and let its spring pull it to
-     its new place. Offsets add onto a word already in motion, so a layout
-     change mid-flight never makes anything jump. */
-  function mutate(change) {
-    const list = words.slice();
-    const before = list.map((w) => w.el.getBoundingClientRect());
-    change();
-    updateRows();
-    if (reduceMotion.matches) return Animator.run(task);
-    list.forEach((w, i) => {
-      if (!w.el.isConnected) return;
-      const after = w.el.getBoundingClientRect();
-      const dx = before[i].left - after.left;
-      const dy = before[i].bottom - after.bottom;   // origin is bottom-centre: scale can't skew it
-      if (Math.abs(dx) > 0.5 || Math.abs(dy) > 0.5) {
-        w.x.set(w.x.value + dx).to(0);
-        w.y.set(w.y.value + dy).to(0);
-        apply(w);                                  // same frame: nothing is seen to jump
-      }
-    });
-    Animator.run(task);
-  }
-
-  function add(label) {
-    placeholderEl.classList.add("gone");
-    mutate(() => {
-      const el = document.createElement("span");
-      el.className = "w";
-      el.textContent = label;
-      wordsEl.appendChild(el);
-      fit(el);
-      const rise = reduceMotion.matches ? 0 : lineHeight * 0.35;
-      const w = {
-        el,
-        x: new Spring(0, POS),
-        y: new Spring(rise, POS).to(0),
-        a: new Spring(0, APPEAR).to(1),
-        out: false,
-        leaving: false,
-      };
-      words.push(w);
-      apply(w);
-    });
-  }
-
-  /* A sign name wider than the panel ("домашнее животное") is set smaller
-     rather than broken over two lines. */
-  function fit(el) {
-    const room = viewportEl.clientWidth;
-    if (el.offsetWidth > room) {
-      const size = parseFloat(getComputedStyle(el).fontSize);
-      el.style.fontSize = (size * room / el.offsetWidth * 0.98).toFixed(2) + "px";
-    }
-  }
-
-  function removeWhere(pred) {
-    mutate(() => {
-      for (let i = words.length - 1; i >= 0; i--) {
-        if (pred(words[i])) {
-          words[i].el.remove();
-          words.splice(i, 1);
-        }
-      }
-    });
-  }
-
-  /* Dissolved rows are dead weight. They go only as whole rows, all at once:
-     removing part of a row would re-wrap everything under it. The block is
-     bottom-anchored by then, so dropping top rows moves nothing visible. */
-  function pruneScrolledOut() {
-    const out = words.filter((w) => w.out);
-    if (out.length && out.every((w) => w.a.settled && w.a.value === 0)) {
-      const doomed = new Set(out);
-      removeWhere((w) => doomed.has(w));
-    }
-  }
-
-  function task(dt) {
-    let moving = false;
-    for (const w of words) {
-      w.x.step(dt);
-      w.y.step(dt);
-      w.a.step(dt);
-      apply(w);
-      if (!(w.x.settled && w.y.settled && w.a.settled)) moving = true;
-    }
-    if (words.some((w) => w.leaving && w.a.settled)) {
-      removeWhere((w) => w.leaving && w.a.settled);
-      moving = true;
-    }
-    if (!moving) pruneScrolledOut();
-    return moving;
-  }
-
-  function clear(animated) {
-    if (!animated) {
-      words.length = 0;
-      wordsEl.textContent = "";
-      viewportEl.classList.add("single");
-      placeholderEl.classList.remove("gone");
-      return;
-    }
-    for (const w of words) {
-      w.leaving = true;
-      w.a.to(0);
-    }
-    Animator.run(task);
-  }
-
-  return { add, clear, measure };
-})();
-
-/* =============================================================== status */
-
-const issues = new Map();
-const ISSUE_ORDER = ["camera", "model", "frozen", "pose", "slow"];
-
-function setIssue(key, text) {
-  if (text) issues.set(key, text);
-  else issues.delete(key);
-  const top = ISSUE_ORDER.find((k) => issues.has(k));
-  if (top) statusEl.textContent = issues.get(top);
-  statusEl.classList.toggle("on", Boolean(top));
+/* A press: squeeze to 0.92 and spring back. */
+function pressable(button, target, depth = 0.08) {
+  const go = drive(new Spring(0, { damping: 0.55, response: 0.28 }), (v) => {
+    target.style.transform = `scale(${(1 - depth * v).toFixed(4)})`;
+  });
+  const down = () => go(1);
+  const up = () => go(0);
+  button.addEventListener("pointerdown", down);
+  button.addEventListener("pointerup", up);
+  button.addEventListener("pointercancel", up);
+  button.addEventListener("pointerleave", up);
 }
+pressable($("btnHistory"), $("btnHistory").firstElementChild, 0.12);
+pressable($("btnSound"), $("btnSound").firstElementChild, 0.12);
+
+/* The sound icon. On: the arcs fan out of the speaker one after another.
+   Off: they fold back and the slash is drawn. Both end as the original files. */
+const sndOn = [...document.querySelectorAll(".snd-on")];
+const sndOff = [...document.querySelectorAll(".snd-off")];
+const goSound = drive(new Spring(1, SOFT), (v) => {
+  for (const svg of sndOn) {
+    svg.style.opacity = clamp01((v - 0.3) / 0.25).toFixed(3);
+    const p = svg.querySelectorAll("path");
+    p[1].style.strokeDashoffset = (1 - clamp01((v - 0.4) / 0.3)).toFixed(3);
+    p[2].style.strokeDashoffset = (1 - clamp01((v - 0.62) / 0.38)).toFixed(3);
+  }
+  for (const svg of sndOff) {
+    svg.style.opacity = clamp01((0.55 - v) / 0.25).toFixed(3);
+    svg.querySelectorAll("path")[2].style.strokeDashoffset = clamp01(v / 0.45).toFixed(3);
+  }
+});
+goSound.render();
+
+$("btnSound").addEventListener("click", () => {
+  state.sound = !state.sound;
+  $("btnSound").setAttribute("aria-pressed", String(state.sound));
+  goSound(state.sound ? 1 : 0);
+  // TODO: функция будет добавлена позже (озвучка текста)
+});
+
+/* ================================================================ pills */
+
+const pills = {};
+for (const [key, id, inner] of [
+  ["gesture", "pillGesture", (c) => icon("hand")],
+  ["voice", "pillVoice", (c) => `<span class="mic">${icon("mic", "mic-on")}${icon("mic-off", "mic-off")}</span>`],
+  ["keys", "pillKeys", (c) => icon("keyboard")],
+]) {
+  const el = $(id);
+  el.innerHTML =
+    `<span class="pill-body">` +
+    `<span class="pill-fill dark"></span><span class="pill-inner"><span class="pill-fill light"></span></span>` +
+    `<span class="pill-ring dark"></span><span class="pill-ring light"></span>` +
+    `<span class="pill-icon dark">${inner()}</span><span class="pill-icon light">${inner()}</span>` +
+    `</span>`;
+  const pill = { el, press: 0, enter: 1, down: 0 };
+  // one transform per pill: entrance from below, the dock leaving, the press
+  pill.place = () => {
+    const y = (pill.enter * 110 + pill.down * 130) * U;
+    el.style.transform = `translate3d(0, ${y.toFixed(1)}px, 0) scale(${(1 - 0.08 * pill.press).toFixed(4)})`;
+  };
+  pill.goActive = drive(new Spring(0, { damping: 0.8, response: 0.38 }), (v) => el.style.setProperty("--a", clamp01(v).toFixed(3)));
+  pill.goPress = drive(new Spring(0, { damping: 0.55, response: 0.28 }), (v) => { pill.press = v; pill.place(); });
+  pill.goEnter = drive(new Spring(1, { damping: 0.75, response: 0.5 }), (v) => { pill.enter = v; pill.place(); });
+  const up = () => pill.goPress(0);
+  el.addEventListener("pointerdown", () => pill.goPress(1));
+  el.addEventListener("pointerup", up);
+  el.addEventListener("pointercancel", up);
+  el.addEventListener("pointerleave", up);
+  pill.place();
+  pills[key] = pill;
+}
+
+/* The microphone: the slash is drawn across it or pulled back. */
+const micOn = [...document.querySelectorAll(".mic-on")];
+const micOff = [...document.querySelectorAll(".mic-off")];
+const goMic = drive(new Spring(0, SOFT), (v) => {
+  for (const svg of micOn) svg.style.opacity = clamp01((v - 0.45) / 0.3).toFixed(3);
+  for (const svg of micOff) {
+    svg.style.opacity = clamp01((0.75 - v) / 0.3).toFixed(3);
+    svg.querySelectorAll("path")[4].style.strokeDashoffset = clamp01(v / 0.6).toFixed(3);
+  }
+});
+goMic.render();
+
+/* ============================================================== screens */
+
+/* The camera block comes down from the top; the bar over it turns beige and
+   the feed moves under it. */
+const CAM_SHIFT = 317;                             // feed top: y 150 without the camera, 467 with
+const goCam = drive(new Spring(0, SCREEN), (v) => {
+  const hide = reduce.matches ? 0 : (1 - v) * 105;
+  const t = `translate3d(0, ${(-hide).toFixed(2)}%, 0)`;
+  camera.style.transform = t;
+  camGlow.style.transform = t;
+  camera.style.opacity = reduce.matches ? clamp01(v).toFixed(3) : "";
+  camera.style.visibility = v > 0.002 ? "visible" : "hidden";
+  camGlow.style.visibility = camera.style.visibility;
+  chat.style.setProperty("--cam", clamp01(v).toFixed(3));
+  // While it moves the feed keeps its tall box and is pushed down by
+  // transform; at rest under the camera the box itself is made shorter.
+  feed.style.transform = feed.classList.contains("under-cam") ? "" : `translate3d(0, ${(v * CAM_SHIFT * U).toFixed(1)}px, 0)`;
+}, (v) => {
+  if (v > 0.5) {
+    feed.classList.add("under-cam");
+    feed.style.top = `calc(var(--sat) + ${408}  * var(--u))`;
+    feed.style.transform = "";
+    scrollFeed(false);
+  } else if (state.mode !== "gesture") {
+    Capture.stop();                                // the camera is out of sight: release it
+  }
+});
+
+function camWillMove() {
+  if (feed.classList.contains("under-cam")) {
+    feed.classList.remove("under-cam");
+    feed.style.top = "";
+    feed.style.transform = `translate3d(0, ${(goCam.spring.value * CAM_SHIFT * U).toFixed(1)}px, 0)`;
+  }
+}
+
+/* The wave rises for the voice screen, and the pills over it turn beige. */
+const goWave = drive(new Spring(0, SCREEN), (v) => {
+  const hide = reduce.matches ? 0 : (1 - v) * 112;
+  wave.style.transform = `translate3d(0, ${hide.toFixed(2)}%, 0)`;
+  wave.style.opacity = reduce.matches ? clamp01(v).toFixed(3) : "";
+  wave.style.visibility = v > 0.002 ? "visible" : "hidden";
+  const w = clamp01(v).toFixed(3);
+  for (const k in pills) pills[k].el.style.setProperty("--w", w);
+});
+
+/* The keyboard strip comes up as the dock goes down. */
+const goKeys = drive(new Spring(0, SOFT), (v) => {
+  const hide = reduce.matches ? 0 : (1 - v) * 115;
+  kbar.style.transform = `translate3d(0, ${hide.toFixed(2)}%, 0)`;
+  kbar.style.opacity = reduce.matches ? clamp01(v).toFixed(3) : "";
+  kbar.style.visibility = v > 0.002 ? "visible" : "hidden";
+  for (const k in pills) { pills[k].down = clamp01(v); pills[k].place(); }
+  dock.style.pointerEvents = v > 0.5 ? "none" : "";
+});
+
+/* «Чтобы начать чат…»: comes up from below, leaves upwards. */
+let introShown = false;
+const goIntro = drive(new Spring(0, SOFT), (v) => {
+  const a = clamp01(v);
+  const y = reduce.matches ? 0 : (introShown ? (1 - a) * 14 : -(1 - a) * 14) * U;
+  intro.style.opacity = a.toFixed(3);
+  intro.style.transform = `translate3d(0, ${y.toFixed(1)}px, 0)`;
+});
+
+function refreshIntro() {
+  const want = state.mode === "idle" && Feed.count === 0;
+  if (want === introShown) return;
+  introShown = want;
+  goIntro(want ? 1 : 0);
+}
+
+function refreshFeedBox() {
+  // How far the feed's bottom edge stands off the bottom of the screen.
+  let b = "calc(var(--sab) + 83 * var(--u))";                       // above the pills
+  if (state.mode === "voice") b = "calc(var(--sab) + 131 * var(--u))";   // above the wave
+  if (state.mode === "keys") b = `calc(var(--kb) + ${kbar.offsetHeight / U + 6} * var(--u))`;
+  feed.style.bottom = b;
+}
+
+function refreshPills() {
+  const g = state.mode === "gesture" && state.gestureOn;
+  const v = state.mode === "voice" && state.micOn;
+  pills.gesture.goActive(g ? 1 : 0);
+  pills.voice.goActive(v ? 1 : 0);
+  pills.keys.goActive(state.mode === "keys" ? 1 : 0);
+  pills.gesture.el.setAttribute("aria-pressed", String(g));
+  pills.voice.el.setAttribute("aria-pressed", String(v));
+  pills.keys.el.setAttribute("aria-pressed", String(state.mode === "keys"));
+  pills.gesture.el.classList.toggle("breathing", g);
+  goMic(state.micOn ? 1 : 0);
+}
+
+function setMode(next) {
+  const prev = state.mode;
+  if (next === prev) return;
+  state.mode = next;
+
+  if (prev === "gesture") {
+    Capture.pause();                               // the camera is released once it has slid away
+    Feed.closePhrase();
+    setGlow(false);
+    showPlaque(null);
+  }
+  if (prev === "voice") { state.micOn = false; Voice.stop(); }
+  if (prev === "keys") { kbarInput.blur(); kbdSim.classList.remove("on"); }
+
+  if (next === "gesture") { state.gestureOn = true; Capture.start(); }
+  if (next === "voice") { state.micOn = true; Voice.start(); }
+  if (next === "keys") {
+    state.before = prev;
+    kbdSim.classList.add("on");
+    kbar.style.visibility = "visible";             // a hidden field cannot take the focus
+    kbarInput.focus({ preventScroll: true });
+  }
+
+  camWillMove();
+  goCam(next === "gesture" ? 1 : 0);
+  goWave(next === "voice" ? 1 : 0);
+  goKeys(next === "keys" ? 1 : 0);
+  refreshKeyboardInset();
+  refreshFeedBox();
+  refreshPills();
+  refreshIntro();
+  scrollFeed(true);
+}
+
+pills.gesture.el.addEventListener("click", () => {
+  if (state.mode !== "gesture") return setMode("gesture");
+  // pressed again: pause, the picture stays
+  state.gestureOn = !state.gestureOn;
+  if (state.gestureOn) Capture.start();
+  else { Capture.pause(); Feed.closePhrase(); setGlow(false); showPlaque(null); }
+  refreshPills();
+});
+
+pills.voice.el.addEventListener("click", () => {
+  if (state.mode !== "voice") return setMode("voice");
+  state.micOn = !state.micOn;
+  if (state.micOn) Voice.start(); else Voice.stop();
+  refreshPills();
+});
+
+pills.keys.el.addEventListener("click", () => setMode("keys"));
 
 /* =============================================================== camera */
 
-let stream = null;
+let personSeen = false;
+function setGlow(on) {
+  personSeen = on;
+  camGlow.classList.toggle("on", on && state.mode === "gesture" && state.gestureOn);
+}
 
-/* ?demo=<video file> plays a recording instead of the camera. It is how this
-   app is checked against a known clip on a laptop; nothing else uses it. */
-const DEMO = new URLSearchParams(location.search).get("demo");
+/* The hint slides up into the camera; on a new text it fades and returns. */
+let plaqueWant = null;
+let plaqueHas = null;
+const goPlaque = drive(new Spring(0, { damping: 0.85, response: 0.32 }), (v) => {
+  const a = clamp01(v);
+  plaque.style.opacity = a.toFixed(3);
+  plaque.style.transform = reduce.matches ? "" : `translate3d(0, ${((1 - a) * 16 * U).toFixed(1)}px, 0)`;
+}, (v) => {
+  if (v < 0.5 && plaqueWant) {                     // out: bring the next text in
+    plaqueHas = plaqueWant;
+    plaqueText.textContent = plaqueHas;
+    goPlaque(1);
+  }
+});
 
-async function openCamera() {
-  if (stream) return true;
-  if (DEMO) {
-    video.srcObject = null;
-    video.src = DEMO;
-    video.loop = true;
-    video.muted = true;
-    try { await video.play(); } catch (e) { /* needs a tap on some browsers */ }
-    video.classList.add("ready");
-    stream = { demo: true };
-    setIssue("camera", null);
-    return true;
+function showPlaque(text) {
+  plaqueWant = text;
+  if (!text) { plaqueHas = null; return goPlaque(0); }
+  if (text === plaqueHas) return goPlaque(1);
+  if (plaqueHas === null || goPlaque.spring.value < 0.05) {
+    plaqueHas = text;
+    plaqueText.textContent = text;
+    return goPlaque(1);
   }
-  if (!navigator.mediaDevices || !navigator.mediaDevices.getUserMedia) {
-    setIssue("camera", "Камера доступна только по HTTPS");
-    return false;
-  }
-  try {
-    stream = await navigator.mediaDevices.getUserMedia({
-      audio: false,
-      video: {
-        facingMode: "user",                        // the front camera faces the signer
-        width: { ideal: 1280 },
-        height: { ideal: 720 },
-        frameRate: { ideal: 30 },
-      },
-    });
-  } catch (err) {
-    setIssue("camera", err && err.name === "NotAllowedError"
-      ? "Нет доступа к камере" : "Камера недоступна");
-    return false;
-  }
-  video.srcObject = stream;
-  try { await video.play(); } catch (e) { /* autoplay is muted; retried on start */ }
-  video.classList.add("ready");
-  stream.getVideoTracks()[0].addEventListener("ended", () => {
-    stream = null;
-    video.classList.remove("ready");
-    stop();
-    setIssue("camera", "Камера отключилась");
+  plaqueHas = "";                                  // fade the old one out first
+  goPlaque(0);
+}
+
+/* ================================================================= feed */
+
+function scrollFeed(smooth) {
+  requestAnimationFrame(() => {
+    feed.scrollTo({ top: feed.scrollHeight, behavior: smooth && !reduce.matches ? "smooth" : "auto" });
   });
-  setIssue("camera", null);
-  return true;
 }
 
-/* ================================================================ model */
+const TAIL = `<svg class="tail" viewBox="157 19 22 25" aria-hidden="true">${ICONS.bubble.body.replace(/<rect[^>]*>/, "")}</svg>`;
 
-let modelState = "idle";                           // idle | loading | ready | failed
+const Feed = (() => {
+  let count = 0;
+  let open = null;                                 // the gesture bubble still taking words
+  let phraseTimer = 0;
+  let ghostTimer = 0;
+  const PHRASE_GAP = 2000;                         // a pause this long ends the phrase
 
-async function loadModel() {
-  if (modelState === "loading" || modelState === "ready") return;
-  modelState = "loading";
-  try {
-    await Recognizer.load((got, total) => {
-      const pct = total ? Math.round(got / total * 100) : Math.round(got / 19124257 * 100);
-      // With the server answering, the device's model is only a reserve:
-      // it loads quietly and nobody has to wait for it.
-      setIssue("model", Cloud.online ? null : `Загрузка распознавания… ${Math.min(99, pct)}%`);
+  /* A bubble grows out of its tail: scale 0.8 -> 1 with a little overshoot. */
+  function bubble(side, appear = true) {
+    const el = document.createElement("div");
+    el.className = "msg " + side;
+    el.innerHTML = `<div class="bubble"><span class="bubble-text"></span></div>${TAIL}`;
+    feedInner.appendChild(el);
+    count++;
+    const m = { el, body: el.firstChild, text: el.firstChild.firstChild, dots: null, words: 0 };
+    if (appear) {
+      drive(new Spring(0, BOUNCY), (v) => {
+        el.style.opacity = clamp01(v * 1.6).toFixed(3);
+        el.style.transform = reduce.matches ? "" : `scale(${(0.8 + 0.2 * v).toFixed(4)})`;
+      })(1);
+    }
+    refreshIntro();
+    scrollFeed(true);
+    return m;
+  }
+
+  /* The bubble's width follows its text smoothly instead of jumping. This is
+     the one place a size is animated; the element is a few dozen pixels.
+     One spring per bubble: a second change while it is still growing only
+     moves the target, so the text is never squeezed into breaking a word. */
+  function grow(m, change) {
+    const w0 = m.body.offsetWidth, h0 = m.body.offsetHeight;
+    m.body.style.width = "";
+    m.text.style.whiteSpace = "";
+    change();
+    const w1 = m.body.offsetWidth, h1 = m.body.offsetHeight;
+    if (reduce.matches || w1 === w0 || h1 !== h0) {
+      if (m.goWidth) m.goWidth.spring.set(w1).to(w1);
+      return;
+    }
+    if (!m.goWidth) {
+      m.goWidth = drive(new Spring(w0, { damping: 0.9, response: 0.3, precision: 0.3 }), (w) => {
+        if (m.growing) m.body.style.width = w.toFixed(1) + "px";
+      }, () => {
+        m.growing = false;
+        m.body.style.width = "";
+        m.text.style.whiteSpace = "";
+      });
+    }
+    m.growing = true;
+    m.goWidth.spring.set(w0);
+    m.body.style.width = w0 + "px";
+    m.text.style.whiteSpace = "nowrap";
+    m.goWidth(w1);
+  }
+
+  function setDots(m, on) {
+    if (on === Boolean(m.dots)) return;
+    grow(m, () => {
+      if (on) {
+        m.dots = document.createElement("span");
+        m.dots.className = "dots";
+        m.dots.innerHTML = "<i></i><i></i><i></i>";
+        m.text.appendChild(m.dots);
+      } else {
+        m.dots.remove();
+        m.dots = null;
+      }
     });
-    modelState = "ready";
-    setIssue("model", null);
-    if (wantB) beginCapture();                     // pressed while it was still loading
-  } catch (err) {
-    modelState = "failed";
-    modelError = err && err.message === "no-webgpu"
-      ? "Устройство не поддерживает распознавание (нужен WebGPU)"
-      : "Не удалось загрузить распознавание";
-    console.error("RSL: model failed", err);
-    setIssue("model", Cloud.online ? null : modelError);
   }
-}
 
-let modelError = null;
-
-/* Two recognisers, one at a time: the server's SignFlow-R while it answers
-   (cloud.js), the device's S3D otherwise. */
-Recognizer.onWord = (label) => {
-  if (capturing && !Cloud.online) Captions.add(label);
-};
-
-Cloud.onWord = (label) => {
-  if (capturing) Captions.add(label);
-};
-
-Cloud.onStats = (stats) => {
-  if (stats.online) {
-    setIssue("model", null);
-    for (const k of ["frozen", "slow"]) setIssue(k, null);   // those are the device model's
-    if (wantB && !capturing) beginCapture();      // pressed before anything was ready
-  } else if (modelState === "failed") {
-    setIssue("model", modelError);                // no server and no model in the device
+  /* A word rises 6 points into place. */
+  function word(m, text) {
+    const w = document.createElement("span");
+    w.className = "w";
+    w.textContent = text;
+    grow(m, () => m.text.insertBefore(w, m.dots));
+    m.words++;
+    drive(new Spring(0, SOFT), (v) => {
+      w.style.opacity = clamp01(v).toFixed(3);
+      w.style.transform = reduce.matches ? "" : `translate3d(0, ${((1 - v) * 6 * U).toFixed(1)}px, 0)`;
+    })(1);
+    scrollFeed(true);
   }
-};
 
-Recognizer.onStats = (stats) => {
-  setIssue("frozen", capturing && stats.frozen
-    ? "Нет изображения: картинка не меняется — камера закрыта" : null);
-  // The model reads 32 frames as about one second. Far fewer frames per second
-  // stretch that window, the sign arrives in slow motion and accuracy falls apart.
-  const slow = capturing && captureSince && Date.now() - captureSince > 3000 &&
-               stats.fps > 0 && stats.fps < 18;
-  setIssue("slow", slow ? `Мало кадров с камеры (${stats.fps.toFixed(0)}/с)` : null);
-};
+  function remove(m) {
+    count--;
+    drive(new Spring(1, SOFT), (v) => {
+      m.el.style.opacity = clamp01(v).toFixed(3);
+      m.el.style.transform = reduce.matches ? "" : `scale(${(0.8 + 0.2 * v).toFixed(4)})`;
+    }, () => { m.el.remove(); refreshIntro(); })(0);
+  }
 
-/* ============================================================== capture */
+  /* Gestures: words join the open bubble; two seconds of silence close it. */
+  function gestureWord(text) {
+    clearTimeout(ghostTimer);
+    if (!open) { open = bubble("right"); setDots(open, true); }
+    word(open, text);
+    clearTimeout(phraseTimer);
+    phraseTimer = setTimeout(closePhrase, PHRASE_GAP);
+  }
 
-/* Browsers throttle main-thread timers to ~1 Hz in a hidden tab; timers in a
-   worker are not throttled, so the capture clock ticks from one. */
-let ticker = null;
-let fallbackTimer = null;
-let capturing = false;
-let captureDelay = 0;
-let captureSince = 0;
-
-function ensureTicker() {
-  if (ticker === null) {
-    try {
-      const src = "let id=null;onmessage=(e)=>{clearInterval(id);id=null;" +
-                  "if(!e.data.stop){id=setInterval(()=>postMessage(0),e.data.interval);}};";
-      ticker = new Worker(URL.createObjectURL(new Blob([src], { type: "text/javascript" })));
-      ticker.onmessage = captureFrame;
-    } catch (e) {
-      ticker = false;
+  /* The model sees a sign taking shape: three dots, as in a messenger. If no
+     word comes of it, the empty bubble goes away again. */
+  function listening(on) {
+    clearTimeout(ghostTimer);
+    if (on) {
+      if (!open) ghostTimer = setTimeout(() => { if (!open) { open = bubble("right"); setDots(open, true); } }, 400);
+    } else if (open && open.words === 0) {
+      ghostTimer = setTimeout(() => { if (open && open.words === 0) { remove(open); open = null; } }, 1500);
     }
   }
-  return ticker;
-}
 
-function startCaptureLoop() {
-  if (ensureTicker()) {
-    ticker.postMessage({ interval: 33 });
-    return;
+  function closePhrase() {
+    clearTimeout(phraseTimer);
+    clearTimeout(ghostTimer);
+    if (!open) return;
+    if (open.words === 0) remove(open); else setDots(open, false);
+    open = null;
   }
-  clearTimeout(fallbackTimer);
-  const tick = () => {
-    if (!capturing) return;
-    captureFrame();
-    fallbackTimer = setTimeout(tick, 33);
-  };
-  tick();
-}
 
-function stopCaptureLoop() {
-  if (ticker) ticker.postMessage({ stop: true });
-  clearTimeout(fallbackTimer);
-}
-
-function captureFrame() {
-  if (!capturing || !stream) return;
-  // The person, framed the way the model reads best (framer.js); while no one
-  // has been found yet, what is on screen.
-  Framer.update(video, performance.now());
-  const crop = Framer.info.crop || visibleCrop();
-  const cloud = Cloud.online;
-  if (cloud !== usingCloud) {                      // the server came or went: start clean
-    usingCloud = cloud;
-    if (cloud) Cloud.start();
-    else if (modelState === "ready") Recognizer.start();
+  /* A whole message at once, on the left (voice and keyboard). */
+  function say(text, appear = true) {
+    const m = bubble("left", appear);
+    m.text.textContent = text;
+    return m;
   }
-  if (cloud) Cloud.pushFrame(video, crop);
-  else if (modelState === "ready") Recognizer.pushFrame(video, crop);
-  setIssue("pose", Framer.info.advice);
+
+  function clear() {
+    closePhrase();
+    feedInner.textContent = "";
+    count = 0;
+    refreshIntro();
+  }
+
+  return { bubble, word, setDots, remove, gestureWord, listening, closePhrase, say, clear, get count() { return count; } };
+})();
+
+Capture.onWord = (label) => {
+  if (state.mode === "gesture" && state.gestureOn) Feed.gestureWord(label);
+};
+Capture.onListening = (on) => {
+  if (state.mode === "gesture" && state.gestureOn) Feed.listening(on);
+};
+Capture.onMessage = (text) => showPlaque(state.mode === "gesture" ? text : null);
+Capture.onPerson = (seen) => setGlow(seen);
+
+/* ================================================================ voice */
+
+/* TODO: функция будет добавлена позже (распознавание речи).
+   For now the screen only shows how it will look: a bubble on the left with
+   three dots, then a demo line arriving word by word. No microphone is used. */
+const Voice = (() => {
+  const DEMO = "Здравствуйте! Это пример текста из голоса.";
+  let timers = [];
+  let shown = false;
+  let m = null;
+
+  function start() {
+    if (shown) return;                             // the demo plays once per chat
+    shown = true;
+    timers.push(setTimeout(() => {
+      m = Feed.bubble("left");
+      Feed.setDots(m, true);
+      DEMO.split(" ").forEach((w, i, all) => {
+        timers.push(setTimeout(() => {
+          Feed.word(m, w);
+          if (i === all.length - 1) timers.push(setTimeout(() => Feed.setDots(m, false), 500));
+        }, 700 + i * 320));
+      });
+    }, 500));
+  }
+
+  function stop() {
+    timers.forEach(clearTimeout);
+    timers = [];
+    if (m && m.dots) Feed.setDots(m, false);
+  }
+
+  return { start, stop, reset() { stop(); shown = false; m = null; } };
+})();
+
+/* ============================================================= keyboard */
+
+/* The strip rides on top of the on-screen keyboard, wherever that is. */
+function refreshKeyboardInset() {
+  let kb = 0;
+  const vv = window.visualViewport;
+  if (vv) kb = Math.max(0, window.innerHeight - vv.height - vv.offsetTop);
+  if (document.documentElement.classList.contains("sim") && state.mode === "keys") kb = 335 * U;
+  document.documentElement.style.setProperty("--kb", kb.toFixed(1) + "px");
+}
+if (window.visualViewport) {
+  visualViewport.addEventListener("resize", () => { refreshKeyboardInset(); refreshFeedBox(); });
+  visualViewport.addEventListener("scroll", () => { refreshKeyboardInset(); window.scrollTo(0, 0); });
 }
 
-let usingCloud = null;
+function fitInput() {
+  kbarInput.style.height = "auto";
+  kbarInput.style.height = Math.min(kbarInput.scrollHeight, 104 * U) + "px";
+  refreshFeedBox();
+}
+kbarInput.addEventListener("input", fitInput);
 
-/* The model sees what the person sees: the part of the camera picture shown
-   above the panel. The video fills the screen with object-fit: cover, so most
-   of the frame's edges never reach the screen - and without this crop the
-   model got the whole frame, with the person small inside it, and recognised
-   far worse (see recognizer.js). The mirroring is symmetric, so it does not
-   change which part of the frame that is. */
-let panelTop = 0;
-
-function visibleCrop() {
-  const vw = video.videoWidth, vh = video.videoHeight;
-  const W = video.clientWidth, H = video.clientHeight;
-  if (!vw || !vh || !W || !H) return null;
-  const s = Math.max(W / vw, H / vh);
-  const ox = (W - vw * s) / 2, oy = (H - vh * s) / 2;
-  return { x: -ox / s, y: -oy / s, w: W / s, h: Math.min(H, panelTop) / s };
+/* Enter sends: the text takes off from the strip and lands in the feed as a
+   bubble on the left. */
+function sendTyped() {
+  const text = kbarInput.value.trim();
+  if (!text) return;
+  const from = kbarInput.getBoundingClientRect();
+  kbarInput.value = "";
+  fitInput();
+  // TODO: функция будет добавлена позже (сообщение нигде не сохраняется)
+  const m = Feed.say(text, reduce.matches);
+  if (reduce.matches) return;
+  const to = m.el.getBoundingClientRect();
+  const dx = from.left - to.left, dy = from.top - to.top;
+  drive(new Spring(1, { damping: 0.8, response: 0.42 }), (v) => {
+    m.el.style.transform = `translate3d(${(dx * v).toFixed(1)}px, ${(dy * v).toFixed(1)}px, 0)`;
+  })(0);
 }
 
-function beginCapture() {
-  if (capturing || !(modelState === "ready" || Cloud.online)) return;
-  capturing = true;
-  usingCloud = null;
-  Framer.reset();
-  // Frames and inference are the heaviest work there is. Let the transition
-  // play out on a quiet main thread first; the model needs a second of video
-  // before it can say anything anyway.
-  clearTimeout(captureDelay);
-  captureDelay = setTimeout(() => {
-    if (!capturing) return;
-    captureSince = Date.now();
-    startCaptureLoop();
-  }, 450);
-}
-
-/* ======================================================= start and stop */
-
-function buzz() {
-  // Fires in the same handler as the visual change, so sight and touch agree.
-  try { if (navigator.vibrate) navigator.vibrate(8); } catch (e) { /* unsupported */ }
-}
-
-async function start() {
-  if (wantB) return;
-  goTo(true);
-  buzz();
-  resetTaps();
-  Captions.clear(captionsEl.style.visibility === "visible");
-  placeholderEl.classList.remove("gone");
-  keepAwake();
-  if (!stream) await openCamera();
-  if (modelState === "ready" || Cloud.online) beginCapture();
-  else loadModel();                                // starts capture when it lands
-}
-
-function stop() {
-  if (!wantB) return;
-  capturing = false;                               // not one more frame is read
-  clearTimeout(captureDelay);
-  stopCaptureLoop();
-  Recognizer.stop();
-  Cloud.stop();
-  setIssue("pose", null);
-  goTo(false);
-  buzz();
-  resetTaps();
-}
-
-/* ============================================================== gestures */
-
-// Commit on touch-down: the press itself is the start, nothing waits for release.
-startBtn.addEventListener("pointerdown", (e) => {
-  if (e.button !== 0) return;
-  e.preventDefault();
-  start();
-});
-startBtn.addEventListener("keydown", (e) => {
-  if (e.key === "Enter" || e.key === " ") {
+kbarInput.addEventListener("keydown", (e) => {
+  if (e.key === "Enter" && !e.shiftKey && !e.isComposing) {
     e.preventDefault();
-    start();
+    sendTyped();
+  } else if (e.key === "Escape") {
+    closeKeys();
   }
 });
-addEventListener("keydown", (e) => {
-  if (e.key === "Escape") stop();
+
+/* The cross turns a quarter and the strip goes down with the keyboard. */
+const goKbarClose = drive(new Spring(0, BOUNCY), (v) => {
+  $("kbarClose").firstElementChild.style.transform = `rotate(${(v * 90).toFixed(1)}deg)`;
 });
-
-/* A clean double tap anywhere stops recognition. "Clean": each tap short and
-   still (under 10 px of drift), the second landing within 300 ms and 32 px of
-   the first, one finger only. It fires on the second touch-down. */
-const TAP_TIME = 250;
-const TAP_SLOP = 10;
-const DOUBLE_GAP = 300;
-const DOUBLE_SLOP = 32;
-const activePointers = new Set();
-let press = null;
-let lastTap = null;
-
-function resetTaps() {
-  press = null;
-  lastTap = null;
+function closeKeys() {
+  goKbarClose.spring.set(0);
+  goKbarClose(1);
+  setMode(state.before === "keys" ? "idle" : state.before);
 }
+$("kbarClose").addEventListener("click", closeKeys);
 
-addEventListener("pointerdown", (e) => {
-  if (e.isPrimary) activePointers.clear();          // a new gesture begins
-  activePointers.add(e.pointerId);
-  if (!wantB || (e.target.closest && e.target.closest("#start"))) return;
-  if (activePointers.size > 1) return resetTaps();  // a pinch is not a tap
+/* ============================================================== history */
 
-  if (lastTap && e.timeStamp - lastTap.t <= DOUBLE_GAP &&
-      Math.hypot(e.clientX - lastTap.x, e.clientY - lastTap.y) <= DOUBLE_SLOP) {
-    stop();
-    return;
-  }
-  press = { id: e.pointerId, x: e.clientX, y: e.clientY, t: e.timeStamp };
-});
+/* TODO: функция будет добавлена позже (история чатов).
+   The list is a placeholder: nothing is stored, renamed or deleted, and
+   choosing a chat only returns to the start screen. */
+const Wheel = (() => {
+  const el = $("wheel");
+  const box = $("wheelItems");
+  const STEP = 43;                                 // points between rows
+  let rows = [];                                   // { el, grow }
+  const pos = new Spring(0, { damping: 0.85, response: 0.45, precision: 0.001 });
 
-addEventListener("pointermove", (e) => {
-  if (press && e.pointerId === press.id &&
-      Math.hypot(e.clientX - press.x, e.clientY - press.y) > TAP_SLOP) {
-    press = null;
-  }
-});
-
-function pointerEnd(e) {
-  activePointers.delete(e.pointerId);
-  if (press && e.pointerId === press.id && e.type === "pointerup" &&
-      e.timeStamp - press.t <= TAP_TIME) {
-    lastTap = { x: e.clientX, y: e.clientY, t: e.timeStamp };
-  }
-  if (press && e.pointerId === press.id) press = null;
-}
-addEventListener("pointerup", pointerEnd);
-addEventListener("pointercancel", pointerEnd);
-addEventListener("contextmenu", (e) => e.preventDefault());   // no long-press menus on a kiosk
-
-/* ============================================================== plumbing */
-
-let wakeLock = null;
-async function keepAwake() {
-  try {
-    if (!wakeLock && "wakeLock" in navigator) {
-      wakeLock = await navigator.wakeLock.request("screen");
-      wakeLock.addEventListener("release", () => { wakeLock = null; });
+  function render() {
+    let at = 0;                                    // rows before this one, counting a growing row in part
+    for (const r of rows) {
+      const d = at + (r.grow - 1) / 2 - pos.value;
+      at += r.grow;
+      const ad = Math.abs(d);
+      // 38 pt in the centre, 30 pt one row away, smaller and fainter beyond
+      const size = ad <= 1 ? lerp(38, 30, ad) : Math.max(16, 30 - 6 * (ad - 1));
+      const alpha = ad <= 1 ? lerp(1, 0.7, ad) : Math.max(0, 0.7 - 0.4 * (ad - 1));
+      const tilt = reduce.matches ? 0 : Math.max(-62, Math.min(62, -d * 16));
+      const y = d * STEP * U * (1 - 0.03 * Math.min(ad, 3));
+      r.el.style.opacity = (alpha * r.grow).toFixed(3);
+      r.el.style.transform =
+        `translate3d(0, ${y.toFixed(1)}px, 0) rotateX(${tilt.toFixed(1)}deg) scale(${(size / 38 * (0.6 + 0.4 * r.grow)).toFixed(4)})`;
+      r.el.style.visibility = alpha > 0.01 ? "visible" : "hidden";
+      r.el.setAttribute("aria-selected", String(ad < 0.5));
     }
-  } catch (e) { /* unsupported or refused; the stand's auto-lock covers it */ }
-}
-document.addEventListener("visibilitychange", () => {
-  if (!document.hidden) keepAwake();
+  }
+
+  const go = drive(pos, render);
+
+  function build(names, current) {
+    box.textContent = "";
+    rows = names.map((name) => {
+      const item = document.createElement("div");
+      item.className = "wheel-item";
+      item.setAttribute("role", "option");
+      item.textContent = name;
+      box.appendChild(item);
+      return { el: item, grow: 1 };
+    });
+    pos.set(current).to(current);
+    pos.velocity = 0;
+    render();
+  }
+
+  const centre = () => Math.max(0, Math.min(rows.length - 1, Math.round(pos.value)));
+
+  /* Drag with inertia, then settle softly on a row. Past either end the list
+     resists, like a rubber band. */
+  let drag = null;
+  el.addEventListener("pointerdown", (e) => {
+    if (e.button !== 0) return;
+    el.setPointerCapture(e.pointerId);
+    drag = { id: e.pointerId, y: e.clientY, at: pos.value, moved: 0, v: 0, t: e.timeStamp, lastY: e.clientY };
+    pos.to(pos.value);
+    pos.velocity = 0;
+  });
+  el.addEventListener("pointermove", (e) => {
+    if (!drag || e.pointerId !== drag.id) return;
+    const dy = e.clientY - drag.y;
+    drag.moved = Math.max(drag.moved, Math.abs(dy));
+    let p = drag.at - dy / (STEP * U);
+    const max = rows.length - 1;
+    if (p < 0) p *= 0.35; else if (p > max) p = max + (p - max) * 0.35;
+    const dt = Math.max(1, e.timeStamp - drag.t) / 1000;
+    drag.v = lerp(drag.v, -(e.clientY - drag.lastY) / (STEP * U) / dt, 0.5);
+    drag.t = e.timeStamp;
+    drag.lastY = e.clientY;
+    pos.set(p).to(p);
+    render();
+  });
+  const release = (e) => {
+    if (!drag || e.pointerId !== drag.id) return;
+    const d = drag;
+    drag = null;
+    if (d.moved < 6 * U) return tap(e);
+    const target = Math.max(0, Math.min(rows.length - 1, Math.round(pos.value + d.v * 0.22)));
+    pos.velocity = reduce.matches ? 0 : d.v;
+    go(target);
+  };
+  el.addEventListener("pointerup", release);
+  el.addEventListener("pointercancel", release);
+
+  function tap(e) {
+    const r = el.getBoundingClientRect();
+    const off = Math.round((e.clientY - (r.top + r.height / 2)) / (STEP * U));
+    const i = Math.max(0, Math.min(rows.length - 1, centre() + off));
+    if (off === 0) choose(i); else go(i);
+  }
+
+  el.addEventListener("wheel", (e) => {
+    e.preventDefault();
+    go(Math.max(0, Math.min(rows.length - 1, Math.round(pos.target + Math.sign(e.deltaY)))));
+  }, { passive: false });
+
+  el.addEventListener("keydown", (e) => {
+    if (e.key === "ArrowDown") go(Math.min(rows.length - 1, Math.round(pos.target) + 1));
+    else if (e.key === "ArrowUp") go(Math.max(0, Math.round(pos.target) - 1));
+    else if (e.key === "Enter") choose(centre());
+    else return;
+    e.preventDefault();
+  });
+
+  let choose = () => {};
+
+  /* A new chat opens up in the middle of the wheel, pushing the rest apart. */
+  function insert(name, done) {
+    const i = centre() + 1;
+    const item = document.createElement("div");
+    item.className = "wheel-item";
+    item.setAttribute("role", "option");
+    item.textContent = name;
+    box.insertBefore(item, rows[i] ? rows[i].el : null);
+    const row = { el: item, grow: reduce.matches ? 1 : 0 };
+    rows.splice(i, 0, row);
+    go(i);
+    drive(new Spring(row.grow, { damping: 0.7, response: 0.45 }), (v) => { row.grow = clamp01(v); render(); }, done)(1);
+    return i;
+  }
+
+  return { build, insert, render, set onChoose(fn) { choose = fn; } };
+})();
+
+/* The history slides up from the bottom; the chat behind it steps back a
+   little and comes forward again when it closes. */
+const goHistory = drive(new Spring(0, SCREEN), (v) => {
+  const hide = reduce.matches ? 0 : (1 - v) * 102;
+  historyEl.style.transform = `translate3d(0, ${hide.toFixed(2)}%, 0)`;
+  historyEl.style.opacity = reduce.matches ? clamp01(v).toFixed(3) : "";
+  historyEl.style.visibility = v > 0.002 ? "visible" : "hidden";
+  chat.style.transform = reduce.matches ? "" : `scale(${(1 - 0.04 * clamp01(v)).toFixed(4)})`;
 });
 
-function layout() {
-  unit = Math.min(innerWidth / 820, innerHeight / 1180);   // CSS px per mockup px
-  // Blur spreads roughly two standard deviations past the edge; zoom the video
-  // enough that its soft, darkened rim stays off screen.
-  const inner = Math.max(1, Math.min(innerWidth, innerHeight));
-  overscan = 1 + (4 * BLUR * unit) / inner;
-  panelTop = panelEl.getBoundingClientRect().top;
-  Captions.measure();
-  renderScene(scene.value);
+function openHistory() {
+  if (state.historyOpen) return;
+  state.historyOpen = true;
+  if (state.mode === "keys") closeKeys();
+  historyEl.setAttribute("aria-hidden", "false");
+  Wheel.build(state.chats, state.current);
+  goHistory(1);
 }
 
-reduceMotion.addEventListener("change", () => renderScene(scene.value));
-addEventListener("resize", layout);
-if (document.fonts && document.fonts.ready) document.fonts.ready.then(layout);
+function closeHistory() {
+  if (!state.historyOpen) return;
+  state.historyOpen = false;
+  historyEl.setAttribute("aria-hidden", "true");
+  goHistory(0);
+}
 
-/* The offline cache holds a whole version of the app, which is exactly what
-   makes it unusable while that version is being written: every edit would be
-   served from the previous copy. It is switched off on a development machine. */
-/* ?debug shows, in a corner, exactly what the model is given and its three
-   best guesses - for checking framing and distance on the device itself. */
-if (new URLSearchParams(location.search).has("debug")) {
+function openChat(index) {
+  // TODO: функция будет добавлена позже (чаты не сохраняются: выбранный чат открывается пустым)
+  if (index !== state.current) {
+    state.current = index;
+    setTitle(state.chats[index]);
+    Feed.clear();
+    Voice.reset();
+  }
+  setMode("idle");
+  closeHistory();
+}
+
+Wheel.onChoose = openChat;
+$("btnHistory").addEventListener("click", openHistory);
+
+const goClose = drive(new Spring(0, BOUNCY), (v) => {
+  $("histClose").firstElementChild.style.transform = `rotate(${(v * 90).toFixed(1)}deg)`;
+});
+$("histClose").addEventListener("click", () => {
+  goClose.spring.set(0);
+  goClose(1);
+  closeHistory();
+});
+
+/* «+» turns a quarter; the new chat unfolds in the wheel, then opens. */
+let plusTurns = 0;
+const goPlus = drive(new Spring(0, BOUNCY), (v) => {
+  $("histPlus").firstElementChild.style.transform = `rotate(${(v * 90).toFixed(1)}deg)`;
+});
+let adding = false;
+$("histPlus").addEventListener("click", () => {
+  if (adding) return;
+  adding = true;
+  goPlus(++plusTurns);
+  const name = `Чат #${state.chats.length + 1}`;
+  const i = Wheel.insert(name, () => {
+    setTimeout(() => { adding = false; openChat(i); }, 260);
+  });
+  state.chats.splice(i, 0, name);
+  if (i <= state.current) state.current++;
+});
+
+/* =============================================================== splash */
+
+/* Both marks are drawn as if by a pen, and end up exactly as their files.
+   The house is made of strokes: its own paths are drawn. The figure is one
+   filled shape: it stays as it is and is uncovered through a mask, by wide
+   "brush" strokes that run along the middle of each part. */
+function runSplash(done) {
+  const house = $("logoHouse");
+  const access = $("logoAccess");
+  house.innerHTML = icon("logo-house");
+  const brush = (d, width, cap = "round") =>
+    `<path pathLength="1" d="${d}" stroke-width="${width}" stroke-linecap="${cap}"/>`;
+  access.innerHTML =
+    `<svg class="ic" viewBox="${ICONS["logo-access"].box}" fill="none" aria-hidden="true">` +
+    `<defs><mask id="pen" maskUnits="userSpaceOnUse" x="-5" y="-5" width="115" height="115">` +
+    `<g class="brush" stroke="#fff" fill="none" stroke-linejoin="round">` +
+    brush("M52.5 4.3A48.2 48.2 0 1 1 52.49 4.3", 13, "butt") +          // the ring, clockwise from the top
+    brush("M52.5 21.2A4.1 4.1 0 1 1 52.49 21.2", 9.4) +                  // the head, drawn and filled
+    brush("M25 36.7L44 40.2Q52.5 41.4 61 40.2L80 36.7", 14) +            // arms: left hand, shoulders, right hand
+    brush("M52.5 39.5L52.5 63.5", 25, "butt") +                          // the body, down from the shoulders
+    brush("M50 60L40.3 84.2", 14) + brush("M55.2 60L65.4 84.2", 14) +    // both legs at once
+    `</g></mask></defs><g mask="url(#pen)">${ICONS["logo-access"].body}</g></svg>`;
+
+  const finish = () => {
+    splash.classList.add("drawn");
+    const g = access.querySelector("g[mask]");
+    if (g) g.removeAttribute("mask");              // what is left is the original drawing
+    const defs = access.querySelector("defs");
+    if (defs) defs.remove();
+  };
+
+  const leave = () => {
+    finish();
+    const row = $("splashRow");
+    // the marks shrink and melt, the burgundy goes up, the start screen is under it
+    drive(new Spring(0, SOFT), (v) => {
+      row.style.opacity = (1 - clamp01(v)).toFixed(3);
+      row.style.transform = reduce.matches ? "" : `scale(${(1 - 0.25 * v).toFixed(4)})`;
+    })(1);
+    drive(new Spring(0, { damping: 1, response: 0.55 }), (v) => {
+      if (reduce.matches) splash.style.opacity = (1 - clamp01(v)).toFixed(3);
+      else splash.style.transform = `translate3d(0, ${(-v * 103).toFixed(2)}%, 0)`;
+    }, () => { splash.remove(); })(1);
+    done();
+  };
+
+  if (reduce.matches || params.has("nosplash")) {
+    finish();
+    return setTimeout(leave, params.has("nosplash") ? 0 : 600);
+  }
+
+  const draw = (path, start, ms, easing = "ease-out") =>
+    path.animate(
+      [{ strokeDashoffset: 1, opacity: 0 }, { opacity: 1, offset: 0.04 }, { strokeDashoffset: 0, opacity: 1 }],
+      { delay: start, duration: ms, easing, fill: "both" });
+
+  // 1. the house: the roof in one line, then the strokes left to right, like rain
+  const hp = [...house.querySelectorAll("path")];
+  draw(hp[0], 0, 450, "cubic-bezier(0.45, 0, 0.3, 1)");
+  [3, 2, 1, 4, 5, 6, 7, 8].forEach((k, i) => draw(hp[k], 400 + i * 70, 200));
+
+  // 2. the figure in a circle, from when the house is about half drawn
+  const bp = [...access.querySelectorAll(".brush path")];
+  const T = 520;
+  draw(bp[0], T, 500, "cubic-bezier(0.4, 0, 0.3, 1)");
+  draw(bp[1], T + 470, 160);
+  draw(bp[2], T + 590, 170);
+  draw(bp[3], T + 710, 150);
+  draw(bp[4], T + 820, 160);
+  draw(bp[5], T + 820, 160);
+
+  // 3. one soft pulse, 4. away
+  const pulse = $("splashRow").animate(
+    [{ transform: "scale(1)" }, { transform: "scale(1.04)" }, { transform: "scale(1)" }],
+    { delay: 1520, duration: 300, easing: "ease-in-out" });
+  pulse.onfinish = leave;
+}
+
+/* ================================================================ start */
+
+setTitle(state.chats[state.current]);
+
+// the wavy edge: seven waves over two screen widths (3.5 a screen), amplitude 10
+{
+  let d = "M0 24";
+  for (let x = 0; x <= 786; x += 3) d += `L${x} ${(12 - 11 * Math.sin((x / (786 / 7)) * 2 * Math.PI + 0.6)).toFixed(2)}`;
+  $("wavePath").setAttribute("d", d + "L786 24Z");
+}
+
+goCam.render();
+goWave.render();
+goKeys.render();
+goHistory.render();
+goIntro.render();
+goPlaque.render();
+refreshPills();
+Capture.init(video);
+
+runSplash(() => {
+  // the pills come up from below, left to right
+  ["gesture", "voice", "keys"].forEach((k, i) => setTimeout(() => pills[k].goEnter(0), 120 + i * 60));
+  setTimeout(refreshIntro, 250);
+  // ?screen=gesture|voice|keys|history opens that screen at once (for checking against the mockup)
+  const first = params.get("screen");
+  if (first === "history") openHistory();
+  else if (["gesture", "voice", "keys"].includes(first)) setMode(first);
+});
+
+function relayout() {
+  measure();
+  for (const k in pills) pills[k].place();
+  goCam.render();
+  goPlaque.render();
+  refreshKeyboardInset();
+  refreshFeedBox();
+  Wheel.render();
+}
+addEventListener("resize", relayout);
+reduce.addEventListener("change", relayout);
+if (document.fonts && document.fonts.ready) document.fonts.ready.then(relayout);
+
+/* ?debug shows, in a corner, what the model is given and its best guesses. */
+if (params.has("debug")) {
   const box = document.createElement("div");
   box.className = "debug";
   const cv = document.createElement("canvas");
@@ -616,35 +956,22 @@ if (new URLSearchParams(location.search).has("debug")) {
   document.body.append(box);
   const c = cv.getContext("2d");
   setInterval(() => {
-    const st = Cloud.online ? Cloud.stats : Recognizer.stats;
+    const st = Capture.stats;
     const r = st.crop;
     if (r && video.videoWidth) c.drawImage(video, r.x, r.y, r.w, r.h, 0, 0, 224, 224);
     txt.textContent =
-      st.top.map((t) => `${(t.p * 100).toFixed(0).padStart(3)}%  ${t.label}`).join("\n") +
-      (Cloud.online
-        ? `\nсервер · ${st.fps.toFixed(0)} к/с · модель ${st.ms} мс · задержка ${st.lag} мс`
-        : `\nустройство · ${st.fps.toFixed(0)} к/с · ${Math.round(st.inferMs)} мс · шаг ${st.stride}`) +
-      (r ? `\nкадр ${video.videoWidth}×${video.videoHeight}, вырезка ${r.w}×${r.h}` : "") +
-      `\nпоза ${Framer.info.ready ? Math.round(Framer.info.ms) + " мс" : "не загружена"}` +
-      (Framer.info.crop ? " · человек найден" : " · кадр по экрану") +
-      (Framer.info.advice ? `\n→ ${Framer.info.advice}` : "");
+      (st.top || []).slice(0, 3).map((t) => `${(t.p * 100).toFixed(0).padStart(3)}%  ${t.label}`).join("\n") +
+      (Capture.online
+        ? `\nсервер · ${st.fps.toFixed(0)} к/с · ${st.ms} мс`
+        : `\nустройство · ${st.fps.toFixed(0)} к/с · ${Math.round(st.inferMs)} мс`) +
+      (Framer.info.crop ? "\nчеловек найден" : "\nкадр по экрану");
   }, 200);
 }
 
-// ?rim=0 hides the thin line along the panel's edge, to compare with the glow alone.
-if (new URLSearchParams(location.search).get("rim") === "0") document.body.classList.add("no-rim");
-
+/* The offline cache holds a whole version of the app, which is exactly what
+   makes it unusable while that version is being written: every edit would be
+   served from the previous copy. It is switched off on a development machine. */
 const LOCAL = ["localhost", "127.0.0.1", "::1"].includes(location.hostname);
 if ("serviceWorker" in navigator && !LOCAL) {
   addEventListener("load", () => navigator.serviceWorker.register("sw.js").catch(() => {}));
 }
-
-layout();
-openCamera();
-keepAwake();
-ensureTicker();
-// Downloading and compiling the models takes a while on a first run, so it
-// starts now rather than when someone is standing in front of the camera.
-loadModel();
-Framer.load();
-Cloud.init();

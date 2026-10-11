@@ -5,24 +5,25 @@
    Bump CACHE when anything ships: a new name means a fresh copy of everything,
    and the old one is deleted once the new version takes over. */
 
-const CACHE = "rsl-v7";
+const CACHE = "rsl-v8";
 const ASSETS = [
   "./",
   "index.html",
   "style.css",
   "spring.js",
+  "icons.js",
   "recognizer.js",
   "framer.js",
   "pose-worker.js",
   "cloud.js",
+  "capture.js",
   "app.js",
   "manifest.webmanifest",
   "icon.svg",
   "icon-180.png",
   "icon-192.png",
   "icon-512.png",
-  "fonts/Katgru.ttf",
-  "fonts/MFEvoltSpecialFree.otf",
+  "fonts/GolosText.ttf",
   "vendor/ort.webgpu.min.js",
   "vendor/ort-wasm-simd-threaded.asyncify.mjs",
   "vendor/ort-wasm-simd-threaded.asyncify.wasm",
