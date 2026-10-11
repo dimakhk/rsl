@@ -6,7 +6,12 @@ import Foundation
    The frames the models get are not mirrored - a sign made with the right
    hand stays on the signer's right, as in the videos the models learnt from.
    The picture on screen is mirrored, as a selfie camera shows it; that is
-   done by the preview layer. */
+   done by the preview layer.
+
+   Upright: the sensor sits differently in different devices (on newer iPads
+   the front camera is on the long edge), so the angle is not assumed. The
+   system is asked what turns the picture upright on this screen, and the
+   same angle goes to the picture on screen and to the frames. */
 
 final class Camera: NSObject, AVCaptureVideoDataOutputSampleBufferDelegate {
     enum Failure: Error {
@@ -23,6 +28,11 @@ final class Camera: NSObject, AVCaptureVideoDataOutputSampleBufferDelegate {
 
     private let sessionQueue = DispatchQueue(label: "rsl.camera")
     private var configured = false
+    private var device: AVCaptureDevice?
+    private var output: AVCaptureVideoDataOutput?
+    private weak var previewLayer: AVCaptureVideoPreviewLayer?
+    private var rotation: AVCaptureDevice.RotationCoordinator?
+    private var rotationWatch: NSKeyValueObservation?
     private var frameQueue = DispatchQueue.main
     private var observers: [NSObjectProtocol] = []
 
@@ -44,6 +54,35 @@ final class Camera: NSObject, AVCaptureVideoDataOutputSampleBufferDelegate {
             }
         default:
             finish(.failure(.denied))
+        }
+    }
+
+    /* The layer that shows the picture. Call on the main queue. */
+    func attach(preview layer: AVCaptureVideoPreviewLayer) {
+        previewLayer = layer
+        watchRotation()
+    }
+
+    /* Follows the angle that keeps the picture upright on this screen. */
+    private func watchRotation() {
+        DispatchQueue.main.async {
+            guard let device = self.device, let layer = self.previewLayer else { return }
+            let coordinator = AVCaptureDevice.RotationCoordinator(device: device, previewLayer: layer)
+            self.rotation = coordinator
+            self.rotationWatch = coordinator.observe(\.videoRotationAngleForHorizonLevelPreview, options: [.initial, .new]) {
+                [weak self] coordinator, _ in
+                let angle = coordinator.videoRotationAngleForHorizonLevelPreview
+                DispatchQueue.main.async { self?.turn(to: angle) }
+            }
+        }
+    }
+
+    private func turn(to angle: CGFloat) {
+        if let connection = output?.connection(with: .video), connection.isVideoRotationAngleSupported(angle) {
+            connection.videoRotationAngle = angle
+        }
+        if let connection = previewLayer?.connection, connection.isVideoRotationAngleSupported(angle) {
+            connection.videoRotationAngle = angle
         }
     }
 
@@ -79,8 +118,11 @@ final class Camera: NSObject, AVCaptureVideoDataOutputSampleBufferDelegate {
         guard session.canAddOutput(output) else { return false }
         session.addOutput(output)
 
+        self.device = device
+        self.output = output
         if let connection = output.connection(with: .video) {
-            if connection.isVideoRotationAngleSupported(90) { connection.videoRotationAngle = 90 }   // portrait
+            // Portrait on a phone; corrected right away by watchRotation where it differs.
+            if connection.isVideoRotationAngleSupported(90) { connection.videoRotationAngle = 90 }
             if connection.isVideoMirroringSupported {
                 connection.automaticallyAdjustsVideoMirroring = false
                 connection.isVideoMirrored = false
@@ -97,6 +139,8 @@ final class Camera: NSObject, AVCaptureVideoDataOutputSampleBufferDelegate {
             }
             device.unlockForConfiguration()
         }
+
+        watchRotation()
 
         // An interruption (the app goes to the background, a call comes in) ends
         // by itself and the session carries on; an error does not.

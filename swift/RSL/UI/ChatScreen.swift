@@ -60,8 +60,7 @@ struct TopBar: View {
 /* The picture from the camera. The layer mirrors the front camera by itself,
    as a selfie camera shows it. */
 struct CameraPreview: UIViewRepresentable {
-    let session: AVCaptureSession
-    let running: Bool                            // changes when the camera starts, so the layer is set up then
+    let camera: Camera
 
     final class PreviewView: UIView {
         override class var layerClass: AnyClass { AVCaptureVideoPreviewLayer.self }
@@ -71,17 +70,13 @@ struct CameraPreview: UIViewRepresentable {
     func makeUIView(context: Context) -> PreviewView {
         let view = PreviewView()
         view.backgroundColor = Palette.uiWine
-        view.previewLayer.session = session
+        view.previewLayer.session = camera.session
         view.previewLayer.videoGravity = .resizeAspectFill
+        camera.attach(preview: view.previewLayer)            // the camera keeps it upright
         return view
     }
 
-    func updateUIView(_ view: PreviewView, context: Context) {
-        if let connection = view.previewLayer.connection, connection.isVideoRotationAngleSupported(90),
-           connection.videoRotationAngle != 90 {
-            connection.videoRotationAngle = 90               // portrait
-        }
-    }
+    func updateUIView(_ view: PreviewView, context: Context) {}
 }
 
 struct CameraBlock: View {
@@ -104,7 +99,7 @@ struct CameraBlock: View {
 
             ZStack(alignment: .bottom) {
                 Palette.wine
-                CameraPreview(session: model.capture.camera.session, running: model.cameraReady)
+                CameraPreview(camera: model.capture.camera)
                     .opacity(model.cameraReady ? 1 : 0)
                     .animation(.easeInOut(duration: 0.35), value: model.cameraReady)
                 // A burgundy haze at the top of the picture: the beige bar
@@ -408,11 +403,10 @@ struct KeyboardBar: View {
         .foregroundStyle(Palette.beige)
         .frame(width: m.width)
         .background(
-            // Longer than the strip: nothing shows between it and the keyboard
-            // while the two are still moving.
+            // Exactly the strip and no lower: the keyboard of iOS 26 is
+            // glass, and anything burgundy under it would tint the keys.
             UnevenRoundedRectangle(topLeadingRadius: 22 * u, topTrailingRadius: 22 * u)
                 .fill(Palette.wine)
-                .padding(.bottom, -80 * u)
         )
         .background(GeometryReader { g -> Color in
             let h = g.size.height

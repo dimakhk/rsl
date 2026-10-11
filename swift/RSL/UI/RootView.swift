@@ -8,15 +8,16 @@ import UIKit
 
 /* Where the on-screen keyboard is.
 
-   Asked three ways - the notification UIKit posts, the safe area SwiftUI
-   keeps, UIKit's keyboard layout guide - and the largest sane answer wins. */
+   Asked two ways - the notification UIKit posts and UIKit's keyboard layout
+   guide - and the larger sane answer wins. It lives in an object of its own
+   and not in the root view's state: kept there, the height never reached the
+   screen. */
 final class KeyboardWatcher: ObservableObject {
     @Published private(set) var height: CGFloat = 0          // how much of the screen's bottom it covers
     @Published private(set) var note = ""
 
     var reduceMotion = false
     private var fromNotice: CGFloat = 0
-    private var fromSafeArea: CGFloat = 0
     private var fromGuide: CGFloat = 0
     private var observer: NSObjectProtocol?
 
@@ -37,11 +38,6 @@ final class KeyboardWatcher: ObservableObject {
         if let observer = observer { NotificationCenter.default.removeObserver(observer) }
     }
 
-    func safeArea(bottom: CGFloat) {
-        fromSafeArea = bottom
-        settle()
-    }
-
     func guide(height: CGFloat) {
         fromGuide = height
         settle()
@@ -57,9 +53,9 @@ final class KeyboardWatcher: ObservableObject {
     private func settle() {
         let home = KeyboardWatcher.homeInset()
         let limit = UIScreen.main.bounds.height * 0.6
-        let next = [fromNotice, fromSafeArea, fromGuide].filter { $0 > home + 1 && $0 < limit }.max() ?? 0
-        note = String(format: "клавиатура %.0f: уведомление %.0f · зона %.0f · направляющая %.0f",
-                      Double(next), Double(fromNotice), Double(fromSafeArea), Double(fromGuide))
+        let next = [fromNotice, fromGuide].filter { $0 > home + 1 && $0 < limit }.max() ?? 0
+        note = next > 0 ? String(format: "клавиатура %.0f (уведомление %.0f, направляющая %.0f)",
+                                 Double(next), Double(fromNotice), Double(fromGuide)) : ""
         guard abs(next - height) > 0.5 else { return }
         // The curve the keyboard itself moves on.
         withAnimation(reduceMotion ? Motion.fade
@@ -83,17 +79,7 @@ struct RootView: View {
     }
 
     var body: some View {
-        ZStack {
-            // Sees the keyboard: this one does not ignore the safe area, and
-            // the system counts the keyboard into the bottom of it.
-            GeometryReader { probe in
-                Color.clear.preference(key: BottomInsetKey.self, value: probe.safeAreaInsets.bottom)
-            }
-            screen
-        }
-        .onPreferenceChange(BottomInsetKey.self) { [keyboard] inset in
-            DispatchQueue.main.async { keyboard.safeArea(bottom: inset) }
-        }
+        screen
         // Light text in the status bar over burgundy (the splash, the camera), dark over beige.
         .preferredColorScheme(!model.splashDone || (model.mode == .gesture && !model.historyOpen) ? .dark : .light)
         .onAppear {
@@ -177,11 +163,6 @@ struct KeyboardGuide: UIViewRepresentable {
     func updateUIView(_ view: GuideView, context: Context) {
         view.onChange = onChange
     }
-}
-
-private struct BottomInsetKey: PreferenceKey {
-    static let defaultValue: CGFloat = 0
-    static func reduce(value: inout CGFloat, nextValue: () -> CGFloat) { value = max(value, nextValue()) }
 }
 
 struct PhoneView: View {
@@ -274,7 +255,7 @@ struct PhoneView: View {
 
             KeyboardBar(model: model, barHeight: $barHeight)
                 .frame(width: m.width, height: m.height, alignment: .bottom)
-                .offset(y: -keyboard.height + (keys || reduce ? 0 : 1.15 * barHeight + 80 * u))
+                .offset(y: -keyboard.height + (keys || reduce ? 0 : 1.15 * barHeight))
                 .opacity(reduce && !keys ? 0 : 1)
                 .animation(Motion.pick(Motion.soft, reduce: reduce), value: model.mode)
                 .accessibilityHidden(!keys)
@@ -348,7 +329,7 @@ struct DebugBox: View {
                  : String(format: "устройство (%@) · %.0f к/с · %.0f мс · шаг %d", info.engine, info.fps, info.ms, info.stride))
             Text(info.person ? "человек найден" : "кадр по экрану")
             if !info.note.isEmpty { Text(info.note) }
-            Text(keyboardNote)
+            if !keyboardNote.isEmpty { Text(keyboardNote) }
         }
         .font(.system(size: 10, design: .monospaced))
         .foregroundStyle(.white)
