@@ -52,11 +52,41 @@
   (в браузере нет 3D-свёрток) и сохранённая в половинной точности. Ответы
   совпадают с оригиналом. Скрипт пересборки — `to_2d.py` в исходном проекте.
 
-## Приложение для iPhone
+## Приложения для iPhone
 
-То же веб-приложение, упакованное в оболочку Capacitor: файл `RSL.ipa`, который ставится
-на iPhone с Windows через Sideloadly, без Mac и без App Store. Пошагово —
-[docs/ios-install.md](docs/ios-install.md).
+Их два. Оба собираются на GitHub в файл `.ipa` без подписи и ставятся на iPhone с Windows
+через Sideloadly, без Mac и без App Store. Пошагово — [docs/ios-install.md](docs/ios-install.md).
+
+### На Swift (`swift/`, файл `RSL-swift.ipa`) — основное
+
+Отдельное приложение, без встроенного браузера. Веб-версия остаётся образцом того, как всё
+должно выглядеть и работать; здесь то же самое сделано средствами iOS.
+
+- `swift/RSL/Engine/` — камера (AVFoundation), распознавание и поиск человека, без интерфейса:
+  - `Recognizer.swift` — модель S3D через ONNX Runtime. Сначала считает на процессоре, в фоне
+    пробует Core ML и переходит на него, только если ответ тот же, а считает он быстрее.
+    Кольцо из 32 кадров и правило принятия слова — те же, что в `recognizer.js`.
+  - `Framer.swift` — находит плечи и нос детектором позы iOS (Vision) и вырезает кадр по той же
+    мерке, что `framer.js`: 2,4 × 2,9 ширины плеч. Подсказки, как встать, те же.
+  - `Cloud.swift` — сервер SignFlow-R по протоколу `cloud.js`; `server.json` сначала
+    спрашивается у сайта.
+  - `Capture.swift` — связывает их: сервер, пока он отвечает, иначе модель в телефоне.
+- `swift/RSL/UI/` — экраны по макету на SwiftUI: заставка, чат, жесты, голос, клавиатура,
+  история. Заглушки те же, что в веб-версии, и так же помечены `TODO`.
+- Иконки, шрифт, словарь и `server.json` не продублированы: `swift/tools/prepare.py` берёт
+  их из файлов веб-версии при сборке, иконки рисуются из тех же путей SVG. Проект Xcode
+  пишет XcodeGen по `swift/project.yml`.
+- `swift/RSL/Resources/s3d.onnx` — та же модель S3D из 2D-операций, в полной точности
+  (в браузере она в половинной).
+- `swift/RSLTests/` — тесты, которые идут в симуляторе при каждой сборке: модель в приложении
+  отвечает так же, как на компьютере (`tools/reference.py`), кадры превращаются в нужные
+  числа, расчёт кадрирования и правило принятия слова совпадают с веб-версией.
+- `.github/workflows/ios-swift.yml` — тесты, снимки экранов из симулятора и `.ipa`.
+- Трижды нажать на название чата — табличка с тем, что видит модель и как быстро считает.
+
+### Веб-версия в оболочке (`ios/`, файл `RSL.ipa`) — запасное
+
+То же веб-приложение, упакованное в оболочку Capacitor.
 
 - `ios/` — проект Xcode, `capacitor.config.json` — его настройки, `package.json` —
   версии Capacitor.
@@ -81,5 +111,7 @@
 - **Шрифт Golos Text** — The Golos Text Project Authors, SIL Open Font License 1.1,
   см. `fonts/GOLOS-OFL.txt`.
 - **ONNX Runtime Web** — Microsoft, MIT, см. `vendor/LICENSE-onnxruntime.txt`.
+  В приложении на Swift — **ONNX Runtime** для iOS (тот же проект, та же лицензия MIT),
+  подключается при сборке из `microsoft/onnxruntime-swift-package-manager`.
 - **MediaPipe Tasks Vision и модель Pose Landmarker lite** — Google, Apache 2.0,
   см. `vendor/mediapipe/LICENSE.txt`.
