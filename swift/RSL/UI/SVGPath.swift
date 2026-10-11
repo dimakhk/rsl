@@ -1,6 +1,6 @@
 import SwiftUI
 
-/* The icons come from the designer's SVG files (icons/*.svg in the repository)
+/* The icons come from the designer's SVG files (the icons folder of the repository)
    and are drawn here from the very same path data, so nothing is redrawn by
    hand. This is the part of SVG those files use: path commands
    M L H V C S Q T A Z, absolute and relative. */
