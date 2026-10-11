@@ -82,7 +82,11 @@ const Recognizer = (() => {
     // browser's own cache alongside it and is quick on every later start.
     const bytes = await fetchWithProgress("model/s3d.onnx", onProgress);
     // A bare path is treated as a module specifier, so it has to be absolute.
-    ort.env.wasm.wasmPaths = new URL("vendor/", location.href).href;
+    const vendor = new URL("vendor/", location.href).href;
+    const runtime = "ort-wasm-simd-threaded.asyncify";
+    ort.env.wasm.wasmPaths = Platform.native
+      ? { mjs: vendor + Platform.module(runtime + ".mjs"), wasm: vendor + runtime + ".wasm" }
+      : vendor;
     ort.env.wasm.numThreads = 1;                 // the GPU does the work
     session = await ort.InferenceSession.create(bytes, { executionProviders: ["webgpu"] });
     // The first run compiles the shaders; do it now, not under the user's nose.

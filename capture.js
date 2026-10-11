@@ -133,8 +133,10 @@ const Capture = (() => {
       if (wanted) beginCapture();                  // asked for while it was still loading
     } catch (err) {
       modelState = "failed";
+      // Without WebGPU the device cannot recognise by itself, and this line is
+      // only ever shown while the server is not answering either.
       modelError = err && err.message === "no-webgpu"
-        ? "Устройство не поддерживает распознавание"
+        ? "Нет связи с сервером распознавания"
         : "Не удалось загрузить распознавание";
       console.error("RSL: model failed", err);
       setIssue("model", Cloud.online || !wanted ? null : modelError);

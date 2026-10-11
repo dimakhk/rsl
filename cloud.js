@@ -110,8 +110,27 @@ const Cloud = (() => {
     };
   }
 
-  /* Reads server.json (never from a cache) and connects. Without a server
-     configured this does nothing and the app stays on the device's model. */
+  /* server.json, never from a cache. The iOS app carries its own copy, as old
+     as the build, while the server's address does change; so there the site's
+     copy is asked first and the packed one is for when the site does not answer. */
+  async function readConfig() {
+    if (Platform.native) {
+      const stop = new AbortController();
+      const timer = setTimeout(() => stop.abort(), 4000);
+      try {
+        const res = await fetch(Platform.site + "server.json", { cache: "no-store", signal: stop.signal });
+        if (res.ok) return await res.json();
+      } catch (e) {
+        /* no connection, or the site is down */
+      } finally {
+        clearTimeout(timer);
+      }
+    }
+    return (await fetch("server.json", { cache: "no-store" })).json();
+  }
+
+  /* Reads server.json and connects. Without a server configured this does
+     nothing and the app stays on the device's model. */
   async function init() {
     const q = new URLSearchParams(location.search).get("server");
     if (q === "0") return;                        // ?server=0: the device's model only
@@ -119,7 +138,7 @@ const Cloud = (() => {
       if (q) {
         url = /^wss?:\/\//.test(q) ? q : `wss://${q}/ws`;
       } else {
-        const cfg = await (await fetch("server.json", { cache: "no-store" })).json();
+        const cfg = await readConfig();
         url = cfg.url || null;
         stats.model = cfg.model || "";
       }

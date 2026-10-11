@@ -1,0 +1,96 @@
+# Собирает приложение для iPhone: файл .ipa без подписи.
+# Подпись ставит Sideloadly при установке на телефон (docs/ios-install.md).
+#
+# Запускается только:
+#   - кнопкой «Run workflow» на вкладке Actions;
+#   - при отправке изменений в ветку ios.
+# На каждое изменение в main сборка не идёт: Mac в GitHub Actions - самая
+# дорогая машина (в закрытом репозитории её минуты считаются в 10 раз быстрее).
+
+name: iOS app (.ipa)
+
+on:
+  workflow_dispatch:
+  push:
+    branches: [ios]
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ios-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  build:
+    name: Build unsigned .ipa
+    runs-on: macos-26
+    timeout-minutes: 30
+
+    steps:
+      - uses: actions/checkout@v5
+
+      - uses: actions/setup-node@v5
+        with:
+          node-version: 22
+          cache: npm
+
+      - name: Install Capacitor
+        run: npm ci
+
+      # Copies the web app into www/ and from there into the Xcode project.
+      - name: Pack the web app into the iOS project
+        run: npm run ios:sync
+
+      - name: Build (no code signing)
+        run: |
+          xcodebuild -version
+          if ! xcodebuild \
+              -project ios/App/App.xcodeproj \
+              -scheme App \
+              -configuration Release \
+              -sdk iphoneos \
+              -destination 'generic/platform=iOS' \
+              -derivedDataPath build \
+              CURRENT_PROJECT_VERSION=${{ github.run_number }} \
+              CODE_SIGNING_ALLOWED=NO \
+              CODE_SIGNING_REQUIRED=NO \
+              CODE_SIGN_IDENTITY="" \
+              build > xcodebuild.log 2>&1
+          then
+            tail -n 60 xcodebuild.log
+            # The first errors go to the run's summary page, where they can be
+            # read without opening the log.
+            grep -E "error:|\*\* BUILD FAILED" xcodebuild.log | sort -u | head -n 10 |
+              while IFS= read -r line; do echo "::error title=xcodebuild::$line"; done
+            exit 1
+          fi
+          tail -n 5 xcodebuild.log
+
+      # An .ipa is a zip with the app inside a folder called Payload.
+      - name: Make the .ipa
+        run: |
+          mkdir -p out/Payload
+          cp -R build/Build/Products/Release-iphoneos/App.app out/Payload/
+          cd out
+          zip -qry RSL.ipa Payload
+          ls -lh RSL.ipa
+          echo "### RSL.ipa готов" >> "$GITHUB_STEP_SUMMARY"
+          echo "Размер: $(du -h RSL.ipa | cut -f1). Скачайте его ниже, в разделе Artifacts, распакуйте архив и установите через Sideloadly: [инструкция](https://github.com/${{ github.repository }}/blob/${{ github.ref_name }}/docs/ios-install.md)." >> "$GITHUB_STEP_SUMMARY"
+
+      - uses: actions/upload-artifact@v5
+        with:
+          name: RSL-ipa
+          path: out/RSL.ipa
+          if-no-files-found: error
+          retention-days: 30
+          compression-level: 0
+
+      - name: Keep the build log when the build fails
+        if: failure()
+        uses: actions/upload-artifact@v5
+        with:
+          name: xcodebuild-log
+          path: xcodebuild.log
+          if-no-files-found: ignore
+          retention-days: 7

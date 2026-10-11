@@ -62,7 +62,10 @@ const Framer = (() => {
       digest(d.points, performance.now());
     };
     worker.onerror = (e) => { console.warn("RSL: pose worker error", e.message); busy = false; };
-    worker.postMessage({ init: new URL(".", location.href).href });
+    worker.postMessage({
+      init: new URL(".", location.href).href,
+      bundle: Platform.module("vendor/mediapipe/vision_bundle.mjs"),
+    });
   }
 
   /* Where the crop should be for these landmarks, before smoothing. */

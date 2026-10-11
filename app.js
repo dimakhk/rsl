@@ -970,9 +970,10 @@ if (params.has("debug")) {
 
 /* The offline cache holds a whole version of the app, which is exactly what
    makes it unusable while that version is being written: every edit would be
-   served from the previous copy. It is switched off on a development machine. */
+   served from the previous copy. It is switched off on a development machine.
+   The iOS app has all its files inside it and has no use for a cache at all. */
 const LOCAL = ["localhost", "127.0.0.1", "::1"].includes(location.hostname);
-if ("serviceWorker" in navigator && !LOCAL) {
+if ("serviceWorker" in navigator && !LOCAL && !Platform.native) {
   addEventListener("load", () => {
     navigator.serviceWorker.register("sw.js", { updateViaCache: "none" })
       .then((reg) => reg.update())                 // look for a new version on every open

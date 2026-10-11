@@ -4,7 +4,8 @@
    with importScripts, which module workers do not have; the bundle itself
    comes in through a dynamic import, which classic workers do.
 
-   In:  { init: baseUrl }  then  { bitmap, t }  (a small copy of the frame)
+   In:  { init: baseUrl, bundle: path of the MediaPipe module under it }
+        then  { bitmap, t }  (a small copy of the frame)
    Out: { ready: true } | { failed: message } | { points, ms }
         points: nose and both shoulders as { x, y, v } fractions of the frame,
         or null when nobody was found. */
@@ -15,7 +16,7 @@ self.onmessage = async (e) => {
   const d = e.data;
   if (d.init) {
     try {
-      const { FilesetResolver, PoseLandmarker } = await import(d.init + "vendor/mediapipe/vision_bundle.mjs");
+      const { FilesetResolver, PoseLandmarker } = await import(d.init + d.bundle);
       const fileset = await FilesetResolver.forVisionTasks(d.init + "vendor/mediapipe/wasm");
       landmarker = await PoseLandmarker.createFromOptions(fileset, {
         baseOptions: { modelAssetPath: d.init + "model/pose_landmarker_lite.task", delegate: "CPU" },

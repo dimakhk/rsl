@@ -14,12 +14,13 @@
 
    Bump CACHE with every release. */
 
-const CACHE = "rsl-v9";
+const CACHE = "rsl-v10";
 
 const SHELL = [
   "./",
   "index.html",
   "style.css",
+  "platform.js",
   "spring.js",
   "icons.js",
   "recognizer.js",
