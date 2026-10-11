@@ -52,6 +52,21 @@
   (в браузере нет 3D-свёрток) и сохранённая в половинной точности. Ответы
   совпадают с оригиналом. Скрипт пересборки — `to_2d.py` в исходном проекте.
 
+## Приложение для iPhone
+
+То же веб-приложение, упакованное в оболочку Capacitor: файл `RSL.ipa`, который ставится
+на iPhone с Windows через Sideloadly, без Mac и без App Store. Пошагово —
+[docs/ios-install.md](docs/ios-install.md).
+
+- `ios/` — проект Xcode, `capacitor.config.json` — его настройки, `package.json` —
+  версии Capacitor.
+- `scripts/www.mjs` копирует в `www/` только то, что нужно страницам; оттуда файлы попадают
+  внутрь приложения. С сайта ничего не подгружается.
+- `platform.js` — три отличия оболочки от браузера: нет service worker, модули `.mjs`
+  лежат как `.js`, `server.json` сначала спрашивается у сайта.
+- `.github/workflows/ios.yml` собирает `.ipa` без подписи на Mac в GitHub Actions: по кнопке
+  **Run workflow** или при отправке в ветку `ios`. На изменения в `main` сборка не запускается.
+
 ## Авторство и лицензии
 
 - **Модель S3D и словарь жестов** — [ai-forever/easy_sign](https://github.com/ai-forever/easy_sign),
