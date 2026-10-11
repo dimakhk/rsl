@@ -973,5 +973,9 @@ if (params.has("debug")) {
    served from the previous copy. It is switched off on a development machine. */
 const LOCAL = ["localhost", "127.0.0.1", "::1"].includes(location.hostname);
 if ("serviceWorker" in navigator && !LOCAL) {
-  addEventListener("load", () => navigator.serviceWorker.register("sw.js").catch(() => {}));
+  addEventListener("load", () => {
+    navigator.serviceWorker.register("sw.js", { updateViaCache: "none" })
+      .then((reg) => reg.update())                 // look for a new version on every open
+      .catch(() => {});
+  });
 }
