@@ -11,9 +11,6 @@ struct RootView: View {
     @Environment(\.accessibilityReduceMotion) private var reduce
     @State private var keyboard: CGFloat = 0
 
-    private let keyboardFrames = NotificationCenter.default
-        .publisher(for: UIResponder.keyboardWillChangeFrameNotification)
-
     /* The screen's own safe areas. Asked from the window, because SwiftUI's
        numbers grow by the keyboard's height while it is up. */
     private static func windowInsets() -> UIEdgeInsets? {
@@ -23,6 +20,37 @@ struct RootView: View {
     }
 
     var body: some View {
+        ZStack {
+            // Sees the keyboard: this one does not ignore the safe area, and
+            // the system counts the keyboard into the bottom of it.
+            GeometryReader { probe in
+                Color.clear.preference(key: BottomInsetKey.self, value: probe.safeAreaInsets.bottom)
+            }
+            screen
+        }
+        .onPreferenceChange(BottomInsetKey.self) { inset in
+            let home = RootView.windowInsets()?.bottom ?? 0
+            let height = inset > home + 1 ? inset : 0
+            guard abs(height - keyboard) > 0.5 else { return }
+            // The curve the keyboard itself moves on.
+            withAnimation(reduce ? Motion.fade : .interpolatingSpring(mass: 3, stiffness: 1000, damping: 500, initialVelocity: 0)) {
+                keyboard = height
+            }
+        }
+        // Light text in the status bar over burgundy (the splash, the camera), dark over beige.
+        .preferredColorScheme(!model.splashDone || (model.mode == .gesture && !model.historyOpen) ? .dark : .light)
+        .onAppear {
+            model.reduceMotion = reduce
+            model.debugShown = Launch.debug
+            // Under the unit tests the app is only a host: the tests load the model themselves.
+            if ProcessInfo.processInfo.environment["XCTestConfigurationFilePath"] == nil {
+                model.capture.prepare()
+            }
+        }
+        .onChange(of: reduce) { _, now in model.reduceMotion = now }
+    }
+
+    private var screen: some View {
         GeometryReader { geo in
             let insets = RootView.windowInsets()
             let top = insets?.top ?? geo.safeAreaInsets.top
@@ -31,7 +59,7 @@ struct RootView: View {
             let m = Metrics(size: size, safeTop: top, safeBottom: bottom)
             ZStack {
                 Palette.beige
-                PhoneView(model: model, keyboard: keyboard)
+                PhoneView(model: model, keyboard: min(keyboard, size.height * 0.6))
                     .frame(width: m.width, height: m.height)
                     .clipped()
                     .coordinateSpace(name: "phone")
@@ -40,25 +68,12 @@ struct RootView: View {
             .frame(width: size.width, height: size.height)
         }
         .ignoresSafeArea()
-        // Light text in the status bar over burgundy (the splash, the camera), dark over beige.
-        .preferredColorScheme(!model.splashDone || (model.mode == .gesture && !model.historyOpen) ? .dark : .light)
-        .onReceive(keyboardFrames) { note in
-            guard let end = (note.userInfo?[UIResponder.keyboardFrameEndUserInfoKey] as? NSValue)?.cgRectValue else { return }
-            let height = max(0, UIScreen.main.bounds.height - end.minY)
-            // The keyboard's own curve.
-            withAnimation(reduce ? Motion.fade : .interpolatingSpring(mass: 3, stiffness: 1000, damping: 500, initialVelocity: 0)) {
-                keyboard = height
-            }
-        }
-        .onAppear {
-            model.reduceMotion = reduce
-            // Under the unit tests the app is only a host: the tests load the model themselves.
-            if ProcessInfo.processInfo.environment["XCTestConfigurationFilePath"] == nil {
-                model.capture.prepare()
-            }
-        }
-        .onChange(of: reduce) { _, now in model.reduceMotion = now }
     }
+}
+
+private struct BottomInsetKey: PreferenceKey {
+    static let defaultValue: CGFloat = 0
+    static func reduce(value: inout CGFloat, nextValue: () -> CGFloat) { value = max(value, nextValue()) }
 }
 
 struct PhoneView: View {
@@ -83,14 +98,14 @@ struct PhoneView: View {
                 .opacity(reduce && !model.historyOpen ? 0 : 1)
                 .accessibilityHidden(!model.historyOpen)
 
-            SplashScreen(skip: Launch.noSplash, onDone: {
+            SplashScreen(skip: Launch.noSplash, frozenAt: Launch.splashAt, onDone: {
                 model.splashFinished()
                 Launch.apply(to: model)
             })
 
             if model.debugShown {
-                DebugBox(model: model)
-                    .place(x: 8 * u, y: m.height - m.bottom - 150 * u, width: 230 * u, height: 84 * u)
+                DebugBox(model: model, keyboard: keyboard)
+                    .place(x: 8 * u, y: m.top + 50 * u, width: 250 * u, height: 96 * u)
                     .allowsHitTesting(false)
             }
         }
@@ -211,6 +226,7 @@ struct PhoneView: View {
    Shown by a triple tap on the chat's title. */
 struct DebugBox: View {
     @ObservedObject var model: ChatModel
+    let keyboard: CGFloat
     @State private var info = Capture.Debug()
     private let clock = Timer.publish(every: 0.25, on: .main, in: .common).autoconnect()
 
@@ -224,6 +240,7 @@ struct DebugBox: View {
                  : String(format: "устройство (%@) · %.0f к/с · %.0f мс · шаг %d", info.engine, info.fps, info.ms, info.stride))
             Text(info.person ? "человек найден" : "кадр по экрану")
             if !info.note.isEmpty { Text(info.note) }
+            if keyboard > 0 { Text(String(format: "клавиатура %.0f", keyboard)) }
         }
         .font(.system(size: 10, design: .monospaced))
         .foregroundStyle(.white)
@@ -237,9 +254,14 @@ struct DebugBox: View {
 }
 
 /* Launch arguments, for checking the screens against the mockup in the
-   Simulator:  -nosplash 1   -screen gesture|voice|keys|history   -seed 1 */
+   Simulator:  -nosplash 1   -screen gesture|voice|keys|history   -seed 1
+               -splashAt 900 (the splash as it is that many ms in)   -debug 1 */
 enum Launch {
     static var noSplash: Bool { UserDefaults.standard.bool(forKey: "nosplash") }
+    static var debug: Bool { UserDefaults.standard.bool(forKey: "debug") }
+    static var splashAt: Double? {
+        UserDefaults.standard.object(forKey: "splashAt") == nil ? nil : UserDefaults.standard.double(forKey: "splashAt")
+    }
 
     static func apply(to model: ChatModel) {
         let defaults = UserDefaults.standard

@@ -37,6 +37,7 @@ struct TimingCurve {
 
 struct SplashScreen: View {
     let skip: Bool
+    var frozenAt: Double? = nil                  // for checking: stay on the frame this many ms in
     let onDone: () -> Void
 
     @Environment(\.metrics) private var m
@@ -83,8 +84,8 @@ struct SplashScreen: View {
             let u = m.u
             ZStack(alignment: .topLeading) {
                 Palette.wine
-                TimelineView(.animation(paused: leaving || reduce || skip)) { context in
-                    let ms = leaving || reduce || skip ? 100_000 : context.date.timeIntervalSince(started) * 1000
+                TimelineView(.animation(paused: leaving || reduce || skip || frozenAt != nil)) { context in
+                    let ms = frozenAt ?? (leaving || reduce || skip ? 100_000 : context.date.timeIntervalSince(started) * 1000)
                     marks(ms)
                         .scaleEffect(pulse(ms))
                 }
@@ -101,6 +102,7 @@ struct SplashScreen: View {
             .accessibilityHidden(true)
             .task {
                 started = Date()
+                if frozenAt != nil { return }
                 let wait: Double = skip ? 0 : (reduce ? 0.6 : 1.82)
                 try? await Task.sleep(nanoseconds: UInt64(wait * 1_000_000_000))
                 leaving = true

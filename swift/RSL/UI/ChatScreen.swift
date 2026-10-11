@@ -61,6 +61,7 @@ struct TopBar: View {
    as a selfie camera shows it. */
 struct CameraPreview: UIViewRepresentable {
     let session: AVCaptureSession
+    let running: Bool                            // changes when the camera starts, so the layer is set up then
 
     final class PreviewView: UIView {
         override class var layerClass: AnyClass { AVCaptureVideoPreviewLayer.self }
@@ -103,7 +104,7 @@ struct CameraBlock: View {
 
             ZStack(alignment: .bottom) {
                 Palette.wine
-                CameraPreview(session: model.capture.camera.session)
+                CameraPreview(session: model.capture.camera.session, running: model.cameraReady)
                     .opacity(model.cameraReady ? 1 : 0)
                     .animation(.easeInOut(duration: 0.35), value: model.cameraReady)
                 // A burgundy haze at the top of the picture: the beige bar

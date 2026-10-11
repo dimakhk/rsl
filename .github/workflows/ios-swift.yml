@@ -51,12 +51,13 @@ jobs:
         run: |
           xcodebuild -version
           xcrun simctl list devices available | grep -E "iPhone" | head -n 20
-          # A 393x852 phone, as in the mockup, if there is one.
-          udid=""
-          for name in "iPhone 16" "iPhone 15" "iPhone 17" "iPhone 16 Pro" "iPhone 17 Pro"; do
-            udid=$(xcrun simctl list devices available | grep -E "^ +$name \(" | head -n 1 | grep -oE "[0-9A-F]{8}-[0-9A-F-]{27}" || true)
-            if [ -n "$udid" ]; then break; fi
-          done
+          # A 393x852 phone, as in the mockup: the screenshots can then be laid
+          # over the mockup point for point. Made if the machine has none.
+          name="iPhone 16"
+          udid=$(xcrun simctl list devices available | grep -E "^ +iPhone 16 \(" | head -n 1 | grep -oE "[0-9A-F]{8}-[0-9A-F-]{27}" || true)
+          if [ -z "$udid" ]; then
+            udid=$(xcrun simctl create "RSL iPhone 16" "iPhone 16" 2>/dev/null || true)
+          fi
           if [ -z "$udid" ]; then
             name="first iPhone"
             udid=$(xcrun simctl list devices available | grep -E "^ +iPhone" | head -n 1 | grep -oE "[0-9A-F]{8}-[0-9A-F-]{27}")
@@ -104,11 +105,15 @@ jobs:
             sleep "$wait"
             xcrun simctl io "$udid" screenshot "shots/$name.png"
           }
-          shot splash 1.2
+          # The keyboard in a new simulator opens with a page about swipe typing.
+          xcrun simctl spawn "$udid" defaults write com.apple.keyboard.preferences DidShowContinuousPathIntroduction -bool true || true
+          shot splash-0600 3 -splashAt 600
+          shot splash-1000 3 -splashAt 1000
+          shot splash-1500 3 -splashAt 1500
           shot start 6
           shot gesture 5 -nosplash 1 -screen gesture
           shot voice 7 -nosplash 1 -screen voice
-          shot keys 5 -nosplash 1 -screen keys
+          shot keys 6 -nosplash 1 -screen keys -seed 1 -debug 1
           shot history 5 -nosplash 1 -screen history
           shot messages 5 -nosplash 1 -seed 1
           shot messages-voice 5 -nosplash 1 -seed 1 -screen voice

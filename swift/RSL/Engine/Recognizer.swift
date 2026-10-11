@@ -124,6 +124,20 @@ final class S3DModel {
             trial.note = "Core ML не входит в сборку"
             return trial
         }
+        // Compiling a model this size is the one thing here that the system
+        // may kill the app for on a small device. A note is left before the
+        // attempt and removed after it. Two attempts in a row that never got
+        // to remove it (one could be the person closing the app) mean it
+        // takes the app down, and it is not made again in this version.
+        let key = "coreml-unfinished-" + (Bundle.main.infoDictionary?["CFBundleVersion"] as? String ?? "0")
+        let defaults = UserDefaults.standard
+        let unfinished = defaults.integer(forKey: key)
+        if unfinished >= 2 {
+            trial.note = "Core ML отключён: две попытки не завершились"
+            return trial
+        }
+        defaults.set(unfinished + 1, forKey: key)
+        defer { defaults.removeObject(forKey: key) }
         let input = S3DModel.sample()
         do {
             lock.lock()
