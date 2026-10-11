@@ -10,6 +10,13 @@ struct RootView: View {
     @StateObject private var model = ChatModel()
     @Environment(\.accessibilityReduceMotion) private var reduce
     @State private var keyboard: CGFloat = 0
+    // Three ways to learn where the keyboard is; the app takes the largest sane answer.
+    @State private var fromSafeArea: CGFloat = 0
+    @State private var fromNotice: CGFloat = 0
+    @State private var fromGuide: CGFloat = 0
+
+    private let keyboardFrames = NotificationCenter.default
+        .publisher(for: UIResponder.keyboardWillChangeFrameNotification)
 
     /* The screen's own safe areas. Asked from the window, because SwiftUI's
        numbers grow by the keyboard's height while it is up. */
@@ -29,13 +36,15 @@ struct RootView: View {
             screen
         }
         .onPreferenceChange(BottomInsetKey.self) { inset in
-            let home = RootView.windowInsets()?.bottom ?? 0
-            let height = inset > home + 1 ? inset : 0
-            guard abs(height - keyboard) > 0.5 else { return }
-            // The curve the keyboard itself moves on.
-            withAnimation(reduce ? Motion.fade : .interpolatingSpring(mass: 3, stiffness: 1000, damping: 500, initialVelocity: 0)) {
-                keyboard = height
-            }
+            fromSafeArea = inset
+            settleKeyboard()
+        }
+        .onReceive(keyboardFrames) { note in
+            guard let end = (note.userInfo?[UIResponder.keyboardFrameEndUserInfoKey] as? NSValue)?.cgRectValue else { return }
+            let screen = UIScreen.main.bounds
+            let covered = screen.intersection(end)
+            fromNotice = covered.isNull || covered.maxY < screen.maxY - 1 ? 0 : covered.height
+            settleKeyboard()
         }
         // Light text in the status bar over burgundy (the splash, the camera), dark over beige.
         .preferredColorScheme(!model.splashDone || (model.mode == .gesture && !model.historyOpen) ? .dark : .light)
@@ -50,6 +59,17 @@ struct RootView: View {
         .onChange(of: reduce) { _, now in model.reduceMotion = now }
     }
 
+    private func settleKeyboard() {
+        let home = RootView.windowInsets()?.bottom ?? 0
+        let limit = UIScreen.main.bounds.height * 0.6
+        let height = [fromSafeArea, fromNotice, fromGuide].filter { $0 > home + 1 && $0 < limit }.max() ?? 0
+        guard abs(height - keyboard) > 0.5 else { return }
+        // The curve the keyboard itself moves on.
+        withAnimation(reduce ? Motion.fade : .interpolatingSpring(mass: 3, stiffness: 1000, damping: 500, initialVelocity: 0)) {
+            keyboard = height
+        }
+    }
+
     private var screen: some View {
         GeometryReader { geo in
             let insets = RootView.windowInsets()
@@ -59,7 +79,13 @@ struct RootView: View {
             let m = Metrics(size: size, safeTop: top, safeBottom: bottom)
             ZStack {
                 Palette.beige
-                PhoneView(model: model, keyboard: min(keyboard, size.height * 0.6))
+                KeyboardGuide { height in
+                    fromGuide = height
+                    settleKeyboard()
+                }
+                PhoneView(model: model, keyboard: keyboard,
+                          keyboardNote: String(format: "клавиатура %.0f: зона %.0f · уведомление %.0f · направляющая %.0f",
+                                               keyboard, fromSafeArea, fromNotice, fromGuide))
                     .frame(width: m.width, height: m.height)
                     .clipped()
                     .coordinateSpace(name: "phone")
@@ -71,6 +97,52 @@ struct RootView: View {
     }
 }
 
+/* Asks UIKit where the top of the keyboard is (its keyboard layout guide). */
+struct KeyboardGuide: UIViewRepresentable {
+    var onChange: (CGFloat) -> Void
+
+    final class GuideView: UIView {
+        var onChange: ((CGFloat) -> Void)?
+        private let marker = UIView()
+        private var last: CGFloat = -1
+
+        override init(frame: CGRect) {
+            super.init(frame: frame)
+            isUserInteractionEnabled = false
+            marker.isUserInteractionEnabled = false
+            marker.translatesAutoresizingMaskIntoConstraints = false
+            addSubview(marker)
+            NSLayoutConstraint.activate([
+                marker.topAnchor.constraint(equalTo: keyboardLayoutGuide.topAnchor),
+                marker.leadingAnchor.constraint(equalTo: leadingAnchor),
+                marker.widthAnchor.constraint(equalToConstant: 1),
+                marker.heightAnchor.constraint(equalToConstant: 1),
+            ])
+        }
+
+        required init?(coder: NSCoder) { fatalError("not used") }
+
+        override func layoutSubviews() {
+            super.layoutSubviews()
+            let height = max(0, bounds.height - marker.frame.minY)
+            guard abs(height - last) > 0.5 else { return }
+            last = height
+            let report = onChange
+            DispatchQueue.main.async { report?(height) }
+        }
+    }
+
+    func makeUIView(context: Context) -> GuideView {
+        let view = GuideView()
+        view.onChange = onChange
+        return view
+    }
+
+    func updateUIView(_ view: GuideView, context: Context) {
+        view.onChange = onChange
+    }
+}
+
 private struct BottomInsetKey: PreferenceKey {
     static let defaultValue: CGFloat = 0
     static func reduce(value: inout CGFloat, nextValue: () -> CGFloat) { value = max(value, nextValue()) }
@@ -79,6 +151,7 @@ private struct BottomInsetKey: PreferenceKey {
 struct PhoneView: View {
     @ObservedObject var model: ChatModel
     let keyboard: CGFloat
+    var keyboardNote = ""
     @Environment(\.metrics) private var m
     @Environment(\.accessibilityReduceMotion) private var reduce
     @State private var barHeight: CGFloat = 36
@@ -104,8 +177,8 @@ struct PhoneView: View {
             })
 
             if model.debugShown {
-                DebugBox(model: model, keyboard: keyboard)
-                    .place(x: 8 * u, y: m.top + 50 * u, width: 250 * u, height: 96 * u)
+                DebugBox(model: model, keyboardNote: keyboardNote)
+                    .place(x: 8 * u, y: m.top + 50 * u, width: 300 * u, height: 150 * u)
                     .allowsHitTesting(false)
             }
         }
@@ -226,7 +299,7 @@ struct PhoneView: View {
    Shown by a triple tap on the chat's title. */
 struct DebugBox: View {
     @ObservedObject var model: ChatModel
-    let keyboard: CGFloat
+    let keyboardNote: String
     @State private var info = Capture.Debug()
     private let clock = Timer.publish(every: 0.25, on: .main, in: .common).autoconnect()
 
@@ -240,7 +313,7 @@ struct DebugBox: View {
                  : String(format: "устройство (%@) · %.0f к/с · %.0f мс · шаг %d", info.engine, info.fps, info.ms, info.stride))
             Text(info.person ? "человек найден" : "кадр по экрану")
             if !info.note.isEmpty { Text(info.note) }
-            if keyboard > 0 { Text(String(format: "клавиатура %.0f", keyboard)) }
+            Text(keyboardNote)
         }
         .font(.system(size: 10, design: .monospaced))
         .foregroundStyle(.white)

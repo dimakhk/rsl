@@ -5,6 +5,7 @@ there is one copy of each in the repository:
   fonts/GolosText.ttf  ->  RSL/Generated/
   model/labels.json    ->  RSL/Generated/
   server.json          ->  RSL/Generated/
+  and the licences of the font and of ONNX Runtime
 
 Run before XcodeGen:   python3 swift/tools/prepare.py
 """
@@ -15,7 +16,9 @@ ROOT = os.path.join(HERE, "..", "..")
 OUT = os.path.join(HERE, "..", "RSL", "Generated")
 os.makedirs(OUT, exist_ok=True)
 
-for src in ("fonts/GolosText.ttf", "model/labels.json", "server.json"):
+# The two licence texts go into the app with what they cover.
+for src in ("fonts/GolosText.ttf", "fonts/GOLOS-OFL.txt", "model/labels.json", "server.json",
+            "vendor/LICENSE-onnxruntime.txt"):
     shutil.copy(os.path.join(ROOT, src), OUT)
 
 def attr(tag, name, default=None):

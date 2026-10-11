@@ -85,29 +85,37 @@ struct PillView<IconContent: View>: View {
         let a: CGFloat = active ? 1 : 0
         let w: CGFloat = onWave ? 1 : 0
         let light = a + w - 2 * a * w            // beige icon: on a burgundy fill, or on the wave while not filled
+        let size = CGSize(width: 88 * u, height: 60 * u)
         ZStack {
+            Capsule().strokeBorder(Palette.wine, lineWidth: 5 * u)
+                .frame(width: size.width, height: size.height)
+                .opacity(1 - w)
+            Capsule().strokeBorder(Palette.beige, lineWidth: 5 * u)
+                .frame(width: size.width, height: size.height)
+                .opacity(w * (1 - a))
+            icon.foregroundStyle(Palette.wine).opacity(1 - light)
+            icon.foregroundStyle(Palette.beige).opacity(light)
+        }
+        .frame(width: size.width, height: size.height)
+        .background {
             // The fill spreads from the centre: a disc that outgrows the pill.
+            // (Never scaled to exactly nothing: a zero scale cannot be drawn.)
             Circle().fill(Palette.wine)
                 .frame(width: 112 * u, height: 112 * u)
-                .scaleEffect(a)
-                .opacity(1 - w)
+                .scaleEffect(max(a, 0.001))
+                .opacity(a == 0 ? 0 : 1 - w)
+        }
+        .background {
             // Over the wave the active pill is drawn as in the mockup: its
             // 5-wide ring stays burgundy - so it melts into the wave - and
             // the beige fill sits inside it.
             Circle().fill(Palette.beige)
                 .frame(width: 112 * u, height: 112 * u)
-                .scaleEffect(a)
-                .opacity(w)
+                .scaleEffect(max(a, 0.001))
+                .opacity(a == 0 ? 0 : w)
                 .frame(width: 78 * u, height: 50 * u)
                 .clipShape(RoundedRectangle(cornerRadius: 25 * u))
-            Capsule().strokeBorder(Palette.wine, lineWidth: 5 * u)
-                .opacity(1 - w)
-            Capsule().strokeBorder(Palette.beige, lineWidth: 5 * u)
-                .opacity(w * (1 - a))
-            icon.foregroundStyle(Palette.wine).opacity(1 - light)
-            icon.foregroundStyle(Palette.beige).opacity(light)
         }
-        .frame(width: 88 * u, height: 60 * u)
         .clipShape(Capsule())
         .contentShape(Capsule())
         .animation(Motion.pick(.spring(response: 0.38, dampingFraction: 0.8), reduce: reduce), value: active)
