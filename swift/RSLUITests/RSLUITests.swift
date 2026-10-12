@@ -40,10 +40,22 @@ final class RSLUITests: XCTestCase {
         return XCTWaiter().wait(for: [met], timeout: timeout) == .completed
     }
 
-    /* A message in the chat (a bubble), by its text. */
+    /* A message in the chat (a bubble), by its text. The name of the chat in
+       the top bar may be the same words, and is not a message. */
     private func message(_ text: String) -> XCUIElement {
         app.descendants(matching: .any)
-            .matching(NSPredicate(format: "identifier == 'message' AND label == %@", text)).firstMatch
+            .matching(NSPredicate(format: "label == %@ AND identifier != 'chat-title'", text)).firstMatch
+    }
+
+    /* When a check fails: what is on screen, into the log (lines starting RSLDUMP). */
+    private func found(_ element: XCUIElement, timeout: TimeInterval = 10) -> Bool {
+        if element.waitForExistence(timeout: timeout) { return true }
+        for line in app.debugDescription.split(separator: "
+")
+        where line.contains("label:") || line.contains("identifier:") || line.contains("value:") {
+            print("RSLDUMP", line.trimmingCharacters(in: .whitespaces))
+        }
+        return false
     }
 
     /* The name of the open chat, in the top bar. */
@@ -79,7 +91,7 @@ final class RSLUITests: XCTestCase {
         XCTAssertTrue(title.waitForExistence(timeout: 30))
         XCTAssertEqual(title.label, "Новый чат")
         write("2468 1357")
-        XCTAssertTrue(message("2468 1357").waitForExistence(timeout: 10), "the typed message is not in the chat")
+        XCTAssertTrue(found(message("2468 1357")), "the typed message is not in the chat")
         XCTAssertTrue(wait(title, "label == '2468 1357'"), "the chat was not named after its first message")
 
         button("История чатов").tap()
@@ -98,7 +110,7 @@ final class RSLUITests: XCTestCase {
         row.tap()
         XCTAssertTrue(wait(row, "selected == true"), "the wheel did not turn to the chat that was tapped")
         row.tap()
-        XCTAssertTrue(message("2468 1357").waitForExistence(timeout: 10), "the earlier chat did not open with its messages")
+        XCTAssertTrue(found(message("2468 1357")), "the earlier chat did not open with its messages")
         XCTAssertTrue(wait(plus, "hittable == false"))
         XCTAssertTrue(wait(title, "label == '2468 1357'"))
     }
@@ -168,10 +180,10 @@ final class RSLUITests: XCTestCase {
         button("Клавиатура").tap()
         XCTAssertTrue(app.keyboards.firstMatch.waitForExistence(timeout: 15), "the keyboard did not come up")
         app.typeText("2468 1357")
-        XCTAssertTrue(message("2468 1357").waitForExistence(timeout: 10), "typed text is not in the chat")
+        XCTAssertTrue(found(message("2468 1357")), "typed text is not in the chat")
         app.typeText("\n")
         app.typeText("90")
-        XCTAssertTrue(message("90").waitForExistence(timeout: 10), "a second message did not start after Return")
+        XCTAssertTrue(found(message("90")), "a second message did not start after Return")
 
         app.coordinate(withNormalizedOffset: CGVector(dx: 0.5, dy: 0.2)).tap()
         XCTAssertTrue(wait(app.keyboards.firstMatch, "exists == false"), "a tap beside the keyboard did not put it away")
