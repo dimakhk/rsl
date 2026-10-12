@@ -40,16 +40,30 @@ final class RSLUITests: XCTestCase {
         app.descendants(matching: .any).matching(NSPredicate(format: "label == %@", text)).firstMatch
     }
 
+    /* "On screen and can be pressed" is asked, not "exists": the history
+       screen is always there, slid out of sight below the bottom edge. */
     func testHistoryOpensAndCloses() {
         let history = button("История чатов")
-        history.tap()
         let close = app.buttons["Вернуться в чат"]
-        XCTAssertTrue(close.waitForExistence(timeout: 10), "pressing the history button did not open the history")
-        XCTAssertTrue(app.staticTexts["История"].exists)
-        XCTAssertTrue(app.buttons["Новый чат"].exists)
+        XCTAssertFalse(close.isHittable, "the history is open before anything was pressed")
+        history.tap()
+        XCTAssertTrue(wait(close, "hittable == true"), "pressing the history button did not open the history")
+        XCTAssertTrue(app.staticTexts["История"].isHittable)
         close.tap()
-        XCTAssertTrue(wait(close, "exists == false"), "the history did not close")
-        XCTAssertTrue(app.buttons["История чатов"].waitForExistence(timeout: 10))
+        XCTAssertTrue(wait(close, "hittable == false"), "the history did not close")
+        XCTAssertTrue(wait(history, "hittable == true"), "the chat did not come back")
+    }
+
+    /* «+» adds a chat and opens it. */
+    func testNewChat() {
+        button("История чатов").tap()
+        let plus = app.buttons["Новый чат"]
+        XCTAssertTrue(wait(plus, "hittable == true"))
+        plus.tap()
+        let title = app.staticTexts["Чат #5"]
+        XCTAssertTrue(title.waitForExistence(timeout: 10), "no new chat after «+»")
+        XCTAssertTrue(wait(title, "hittable == true"), "the new chat did not open")
+        XCTAssertTrue(wait(plus, "hittable == false"))
     }
 
     func testSoundSwitches() {
