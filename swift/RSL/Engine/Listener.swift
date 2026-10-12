@@ -5,8 +5,9 @@ import Speech
 /* Turns speech into text with the recogniser built into iOS (Speech).
 
    Russian, with punctuation put in by the system. Where the device can
-   recognise by itself it does, and then needs no connection; otherwise the
-   sound goes to Apple's servers, as dictation on the keyboard does.
+   recognise by itself it does, and then needs no connection; otherwise - or
+   if recognising on the device does not get going - the sound goes to
+   Apple's servers, as dictation on the keyboard does.
 
    The recogniser does not say where one remark ends, so that is decided
    here: when the text has not changed for a moment, the remark is closed and
@@ -37,11 +38,14 @@ final class Listener {
     private var quiet: DispatchWorkItem?
     private var round = 0                        // answers of an older request are dropped
     private var failures = 0                     // requests in a row that ended in an error with nothing heard
+    private var onDevice = true                  // recognise on the device where it can
+    private static let nothingSaid = 1110        // the recogniser's code for "no speech in the sound"
 
     /* Asks for access if it has not been asked yet, then listens. */
     func start() {
         wanted = true
         failures = 0
+        onDevice = true
         Listener.authorize { [weak self] allowed in
             guard let self = self, self.wanted else { return }
             guard allowed else { return self.fail(.denied) }
@@ -102,7 +106,6 @@ final class Listener {
         } catch {
             return fail(.unavailable)
         }
-        note = recognizer.supportsOnDeviceRecognition ? "речь: на устройстве" : "речь: через сервер Apple"
     }
 
     /* One remark = one request to the recogniser. */
@@ -114,7 +117,9 @@ final class Listener {
         next.shouldReportPartialResults = true
         next.addsPunctuation = true
         next.taskHint = .dictation
-        if recognizer.supportsOnDeviceRecognition { next.requiresOnDeviceRecognition = true }
+        let local = onDevice && recognizer.supportsOnDeviceRecognition
+        next.requiresOnDeviceRecognition = local
+        note = local ? "речь: на устройстве" : "речь: через сервер Apple"
         request = next
         task = recognizer.recognitionTask(with: next) { [weak self] result, error in
             DispatchQueue.main.async {
@@ -129,7 +134,8 @@ final class Listener {
                     }
                     if result.isFinal { return self.close(failed: false) }
                 }
-                if error != nil { self.close(failed: true) }
+                // Silence is not a failure: the next request simply waits on.
+                if let error = error { self.close(failed: (error as NSError).code != Listener.nothingSaid) }
             }
         }
     }
@@ -141,10 +147,10 @@ final class Listener {
         DispatchQueue.main.asyncAfter(deadline: .now() + Listener.pause, execute: item)
     }
 
-    /* The remark is over (or the request failed): hand it on and start the
-       next. A request that fails with nothing heard - silence that went on
-       too long, a dropped connection - is tried again after a breath, and
-       given up on if it keeps failing. */
+    /* The remark is over (or the request ended without one): hand it on and
+       start the next. After a request with nothing heard the next one waits
+       a breath; requests that keep failing (a dropped connection, no
+       recogniser) are given up on. */
     private func close(failed: Bool) {
         quiet?.cancel()
         let said = heard
@@ -152,9 +158,13 @@ final class Listener {
         if !said.isEmpty { onRemark?(said) }
         guard wanted, let recognizer = recognizer else { return }
         if failed && said.isEmpty { failures += 1 }
+        if onDevice && failures >= 2 {           // the device's own recogniser does not get going
+            onDevice = false
+            failures = 0
+        }
         if failures >= 8 || !recognizer.isAvailable { return fail(.unavailable) }
         let again = round
-        DispatchQueue.main.asyncAfter(deadline: .now() + (failed ? 0.5 : 0)) { [weak self] in
+        DispatchQueue.main.asyncAfter(deadline: .now() + (said.isEmpty ? 0.5 : 0)) { [weak self] in
             guard let self = self, self.wanted, again == self.round else { return }
             self.begin(recognizer)
         }
