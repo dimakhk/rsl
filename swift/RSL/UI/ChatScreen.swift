@@ -293,8 +293,10 @@ struct FeedView: View {
 
    The field belongs to the keyboard: the app reads it and never writes text
    back into it. The one thing the app does is empty it, after a message is
-   sent. (Writing the app's own copy of the text back on every screen update
-   cost typed spaces.) */
+   sent. (Typed spaces used to get lost. Two things were changed at once -
+   the app stopped writing its own copy of the text back on screen updates,
+   and smart insert/delete was switched off - and the UI test that types
+   "2468 1357" has passed since.) */
 struct KeyboardInput: UIViewRepresentable {
     @ObservedObject var model: ChatModel
 

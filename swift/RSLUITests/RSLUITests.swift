@@ -40,11 +40,12 @@ final class RSLUITests: XCTestCase {
         return XCTWaiter().wait(for: [met], timeout: timeout) == .completed
     }
 
-    /* A message in the chat (a bubble), by its text. The name of the chat in
-       the top bar may be the same words, and is not a message. */
+    /* A message in the chat (a bubble), by its text. The name of the chat -
+       in the top bar and in the history - may be the same words, and is not
+       a message. */
     private func message(_ text: String) -> XCUIElement {
         app.descendants(matching: .any)
-            .matching(NSPredicate(format: "label == %@ AND identifier != 'chat-title'", text)).firstMatch
+            .matching(NSPredicate(format: "identifier == 'message' AND label == %@", text)).firstMatch
     }
 
     /* When a check fails: what is on screen, into the log (lines starting RSLDUMP). */
