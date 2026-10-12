@@ -42,6 +42,7 @@ struct TopBar: View {
                 .contentShape(Rectangle())
                 .onTapGesture(count: 3) { model.debugShown.toggle() }    // what the model sees, for checking
                 .accessibilityAddTraits(.isHeader)
+                .accessibilityIdentifier("chat-title")
                 .offset(x: 80 * u)
 
             // A tap turns speaking on and off; a long press changes the voice.
@@ -235,7 +236,8 @@ struct BubbleRow: View {
         .padding(right ? .trailing : .leading, right ? 44 * u : 42.5 * u)
         .frame(width: m.width)
         .accessibilityElement(children: .ignore)
-        .accessibilityLabel(message.words.map(\.text).joined(separator: " "))
+        .accessibilityLabel(message.text)
+        .accessibilityIdentifier("message")
     }
 }
 

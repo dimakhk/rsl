@@ -42,8 +42,12 @@ final class RSLUITests: XCTestCase {
 
     /* A message in the chat (a bubble), by its text. */
     private func message(_ text: String) -> XCUIElement {
-        app.otherElements.matching(NSPredicate(format: "label == %@", text)).firstMatch
+        app.descendants(matching: .any)
+            .matching(NSPredicate(format: "identifier == 'message' AND label == %@", text)).firstMatch
     }
+
+    /* The name of the open chat, in the top bar. */
+    private var title: XCUIElement { app.descendants(matching: .any)["chat-title"] }
 
     /* Types a message and puts the keyboard away. Digits: nothing for autocorrection to "fix". */
     private func write(_ text: String) {
@@ -72,11 +76,11 @@ final class RSLUITests: XCTestCase {
     /* A chat takes its name from what was said in it; «+» starts a new one;
        the old one waits in the history and opens again with its messages. */
     func testChatsAreNamedKeptAndReopened() {
-        XCTAssertTrue(app.staticTexts["Новый чат"].waitForExistence(timeout: 30))
+        XCTAssertTrue(title.waitForExistence(timeout: 30))
+        XCTAssertEqual(title.label, "Новый чат")
         write("2468 1357")
-        XCTAssertTrue(message("2468 1357").waitForExistence(timeout: 10))
-        let named = app.staticTexts["2468 1357"]
-        XCTAssertTrue(named.waitForExistence(timeout: 10), "the chat was not named after its first message")
+        XCTAssertTrue(message("2468 1357").waitForExistence(timeout: 10), "the typed message is not in the chat")
+        XCTAssertTrue(wait(title, "label == '2468 1357'"), "the chat was not named after its first message")
 
         button("История чатов").tap()
         let plus = app.buttons["new-chat"]
@@ -84,7 +88,7 @@ final class RSLUITests: XCTestCase {
         plus.tap()
         XCTAssertTrue(wait(plus, "hittable == false"), "the new chat did not open")
         XCTAssertTrue(wait(message("2468 1357"), "exists == false"), "the new chat is not empty")
-        XCTAssertTrue(wait(app.staticTexts["Новый чат"], "hittable == true"))
+        XCTAssertTrue(wait(title, "label == 'Новый чат'"))
 
         // back to the first chat: it is one row above the open one, so the
         // first tap brings it to the centre and the second opens it
@@ -96,6 +100,7 @@ final class RSLUITests: XCTestCase {
         row.tap()
         XCTAssertTrue(message("2468 1357").waitForExistence(timeout: 10), "the earlier chat did not open with its messages")
         XCTAssertTrue(wait(plus, "hittable == false"))
+        XCTAssertTrue(wait(title, "label == '2468 1357'"))
     }
 
     /* «+» while the open chat is still empty has nothing to add: it just goes back to it. */
@@ -105,7 +110,8 @@ final class RSLUITests: XCTestCase {
         XCTAssertTrue(wait(plus, "hittable == true"))
         plus.tap()
         XCTAssertTrue(wait(plus, "hittable == false"))
-        XCTAssertTrue(wait(app.staticTexts["Новый чат"], "hittable == true"))
+        XCTAssertTrue(wait(title, "hittable == true"))
+        XCTAssertEqual(title.label, "Новый чат")
     }
 
     func testSoundSwitches() {
