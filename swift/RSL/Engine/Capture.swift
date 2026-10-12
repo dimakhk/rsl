@@ -27,6 +27,7 @@ final class Capture {
         var engine = ""
         var note = ""
         var person = false
+        var hint = ""                            // what would be said to the person (not shown for now)
     }
 
     /* All four are called on the main queue. */
@@ -35,6 +36,7 @@ final class Capture {
     var onPerson: ((Bool) -> Void)?
     var onListening: ((Bool) -> Void)?
     var onCamera: ((Bool) -> Void)?              // the picture is there / is gone
+    var onPicture: ((Bool) -> Void)?             // the picture under the top bar is light / is dark
 
     let camera = Camera()
     private let frames = DispatchQueue(label: "rsl.frames", qos: .userInitiated)
@@ -52,6 +54,9 @@ final class Capture {
     private var person = false
     private var listening = false
     private var viewAspect: CGFloat = 393.0 / 467.0      // width / height of the camera block on screen
+    private var barShare: CGFloat = 0.23                 // how much of that block, from the top, the bar lies over
+    private var pictureLight = false
+    private var frameCount = 0
 
     private var issues: [String: String] = [:]
     private static let order = ["camera", "model", "frozen", "pose", "slow"]
@@ -178,12 +183,29 @@ final class Capture {
         return CGRect(x: 0, y: (height - h) / 2, width: width, height: h)
     }
 
+    /* Is the picture under the top bar light or dark? Looked at six times a
+       second; the answer changes only past a margin, so it does not flicker
+       on a picture that is in between. */
+    private func watchPicture(_ buffer: CVPixelBuffer, width: CGFloat, height: CGFloat) {
+        frameCount += 1
+        guard frameCount % 5 == 0 else { return }
+        var top = visibleCrop(width: width, height: height)
+        top.size.height *= barShare
+        guard let level = FrameTools.lightness(buffer, in: top) else { return }
+        let light = pictureLight ? level > 0.48 : level > 0.60
+        if light != pictureLight {
+            pictureLight = light
+            DispatchQueue.main.async { self.onPicture?(light) }
+        }
+    }
+
     private func frame(_ buffer: CVPixelBuffer) {
+        let width = CGFloat(CVPixelBufferGetWidth(buffer)), height = CGFloat(CVPixelBufferGetHeight(buffer))
+        watchPicture(buffer, width: width, height: height)
         guard capturing else { return }
         let now = Capture.now()
         if now < captureSince { return }                 // the screen's transition is still playing
         framer.update(buffer, now: now)
-        let width = CGFloat(CVPixelBufferGetWidth(buffer)), height = CGFloat(CVPixelBufferGetHeight(buffer))
         let crop = framer.crop ?? visibleCrop(width: width, height: height)
         let online = cloud.online
         if online != usingCloud {                        // the server came or went: start clean
@@ -231,10 +253,14 @@ final class Capture {
 
     // MARK: interface (main queue)
 
-    /* The size of the camera block on screen, for the crop used while nobody is found. */
-    func setView(aspect: CGFloat) {
+    /* The shape of the camera block on screen (width / height) - for the crop
+       used while nobody is found - and how much of it the top bar lies over. */
+    func setView(aspect: CGFloat, bar: CGFloat) {
         guard aspect > 0 else { return }
-        frames.async { self.viewAspect = aspect }
+        frames.async {
+            self.viewAspect = aspect
+            self.barShare = min(1, max(0.05, bar))
+        }
     }
 
     /* Camera on and recognition running. */
@@ -289,6 +315,8 @@ final class Capture {
             self.cameraOn = false
             self.camera.stop()
             self.setIssue("camera", nil)
+            self.pictureLight = false
+            DispatchQueue.main.async { self.onPicture?(false) }
         }
     }
 
@@ -308,6 +336,7 @@ final class Capture {
                 d.ms = self.recognizer.stats.inferMs
                 d.stride = self.recognizer.stats.stride
             }
+            d.hint = self.shown ?? ""
             d.engine = self.recognizer.stats.engine
             d.note = self.recognizer.engineNote
             DispatchQueue.main.async { done(d) }

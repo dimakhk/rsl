@@ -1,5 +1,5 @@
 # The Xcode project is not kept in the repository: XcodeGen writes it from this
-# file on every build (see .github/workflows/ios-swift.yml).
+# file on every build (see .github/workflows/ios.yml).
 name: RSL
 
 options:
@@ -58,6 +58,7 @@ targets:
         ASSETCATALOG_COMPILER_APPICON_NAME: AppIcon
         ENABLE_PREVIEWS: NO
 
+  # Call the app's code directly: the model, frames, framing, the rule.
   RSLTests:
     type: bundle.unit-test
     platform: iOS
@@ -70,17 +71,33 @@ targets:
         GENERATE_INFOPLIST_FILE: YES
         PRODUCT_BUNDLE_IDENTIFIER: io.github.dimakhk.rsl.native.tests
 
+  # Press the buttons on the screen, as a finger does.
+  RSLUITests:
+    type: bundle.ui-testing
+    platform: iOS
+    sources:
+      - path: RSLUITests
+    dependencies:
+      - target: RSL
+    settings:
+      base:
+        GENERATE_INFOPLIST_FILE: YES
+        PRODUCT_BUNDLE_IDENTIFIER: io.github.dimakhk.rsl.native.uitests
+        TEST_TARGET_NAME: RSL
+
 schemes:
   RSL:
     build:
       targets:
         RSL: all
         RSLTests: [test]
+        RSLUITests: [test]
     run:
       config: Debug
     test:
       config: Debug
       targets:
         - RSLTests
+        - RSLUITests
     archive:
       config: Release

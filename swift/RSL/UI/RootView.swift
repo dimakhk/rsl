@@ -3,8 +3,8 @@ import SwiftUI
 import UIKit
 
 /* Puts the screens together. Layers, from the back: messages, the hint text,
-   the camera, the wave, the pills, the top bar, the input strip; over them
-   the history screen and, at the start, the splash. */
+   the camera, the wave, the pills, the top bar; over them the history screen
+   and, at the start, the splash. */
 
 /* Where the on-screen keyboard is.
 
@@ -78,10 +78,17 @@ struct RootView: View {
         return (windows.first { $0.isKeyWindow } ?? windows.first)?.safeAreaInsets
     }
 
+    /* The system's clock and battery: light over burgundy (the splash) and
+       over a dark camera picture, dark over beige and over a light picture. */
+    private var lightStatusBar: Bool {
+        if !model.splashDone { return true }
+        if model.historyOpen || model.mode != .gesture { return false }
+        return !(model.cameraReady && model.pictureIsLight)
+    }
+
     var body: some View {
         screen
-        // Light text in the status bar over burgundy (the splash, the camera), dark over beige.
-        .preferredColorScheme(!model.splashDone || (model.mode == .gesture && !model.historyOpen) ? .dark : .light)
+        .preferredColorScheme(lightStatusBar ? .dark : .light)
         .onAppear {
             model.reduceMotion = reduce
             keyboard.reduceMotion = reduce
@@ -110,7 +117,6 @@ struct RootView: View {
                 PhoneView(model: model, keyboard: keyboard)
                     .frame(width: m.width, height: m.height)
                     .clipped()
-                    .coordinateSpace(name: "phone")
                     .environment(\.metrics, m)
             }
             .frame(width: size.width, height: size.height)
@@ -170,7 +176,6 @@ struct PhoneView: View {
     @ObservedObject var keyboard: KeyboardWatcher
     @Environment(\.metrics) private var m
     @Environment(\.accessibilityReduceMotion) private var reduce
-    @State private var barHeight: CGFloat = 36
 
     private static let intro = "Чтобы начать чат\nвыберите один из способов взаимодействия."
 
@@ -181,6 +186,7 @@ struct PhoneView: View {
                 // The chat behind the history steps back a little and comes
                 // forward again when it closes.
                 .scaleEffect(model.historyOpen && !reduce ? 0.96 : 1)
+                .accessibilityHidden(model.historyOpen)
 
             HistoryScreen(model: model)
                 .offset(y: model.historyOpen || reduce ? 0 : 1.02 * m.height)
@@ -213,7 +219,7 @@ struct PhoneView: View {
         // How far the feed's bottom edge stands off the bottom of the screen.
         var feedBottom = m.bottom + 83 * u                       // above the pills
         if model.mode == .voice { feedBottom = m.bottom + 131 * u }      // above the wave
-        if keys { feedBottom = keyboard.height + barHeight + 6 * u }
+        if keys { feedBottom = max(feedBottom, keyboard.height + 6 * u) }    // above the keyboard
         let feedHeight = max(0, m.height - feedTop - feedBottom)
         let waveHeight = m.bottom + 121 * u                      // its crests reach y 697
 
@@ -253,11 +259,10 @@ struct PhoneView: View {
             TopBar(model: model)
                 .offset(y: m.top + 12 * u)
 
-            KeyboardBar(model: model, barHeight: $barHeight)
-                .frame(width: m.width, height: m.height, alignment: .bottom)
-                .offset(y: -keyboard.height + (keys || reduce ? 0 : 1.15 * barHeight))
-                .opacity(reduce && !keys ? 0 : 1)
-                .animation(Motion.pick(Motion.soft, reduce: reduce), value: model.mode)
+            // Not seen: the keyboard types into it, the text shows in the chat.
+            KeyboardInput(model: model)
+                .frame(width: 1, height: 1)
+                .offset(x: -4, y: -4)
                 .accessibilityHidden(!keys)
         }
         .frame(width: m.width, height: m.height, alignment: .topLeading)
@@ -270,8 +275,8 @@ struct PhoneView: View {
         let y = m.height - m.bottom - 69 * u
         let keys = model.mode == .keys
         let onWave = model.mode == .voice
-        let gesture = model.mode == .gesture && model.gestureOn
-        let voice = model.mode == .voice && model.micOn
+        let gesture = model.mode == .gesture
+        let voice = model.mode == .voice
 
         func slot<V: View>(_ index: Int, x: CGFloat, label: String, pressed: Bool, action: @escaping () -> Void,
                            @ViewBuilder _ pill: () -> V) -> some View {
@@ -296,8 +301,8 @@ struct PhoneView: View {
             }
             slot(1, x: 152 * u, label: "Голос", pressed: voice, action: model.tapVoice) {
                 PillView(active: voice, onWave: onWave, breathing: false) {
-                    MicIcon(v: model.micOn ? 1 : 0, width: 32 * u)
-                        .animation(Motion.pick(Motion.soft, reduce: reduce), value: model.micOn)
+                    MicIcon(v: voice ? 1 : 0, width: 32 * u)
+                        .animation(Motion.pick(Motion.soft, reduce: reduce), value: voice)
                 }
             }
             slot(2, x: 263 * u, label: "Клавиатура", pressed: keys, action: model.tapKeys) {
@@ -311,8 +316,8 @@ struct PhoneView: View {
     }
 }
 
-/* ?debug of the web app: the model's three best guesses and how fast it runs.
-   Shown by a triple tap on the chat's title. */
+/* For checking on a device: the model's three best guesses and how fast it
+   runs. Shown by a triple tap on the chat's title. */
 struct DebugBox: View {
     @ObservedObject var model: ChatModel
     let keyboardNote: String
@@ -328,6 +333,7 @@ struct DebugBox: View {
                  ? String(format: "сервер · %.0f к/с · %.0f мс", info.fps, info.ms)
                  : String(format: "устройство (%@) · %.0f к/с · %.0f мс · шаг %d", info.engine, info.fps, info.ms, info.stride))
             Text(info.person ? "человек найден" : "кадр по экрану")
+            if !info.hint.isEmpty { Text("подсказка: " + info.hint) }
             if !info.note.isEmpty { Text(info.note) }
             if !keyboardNote.isEmpty { Text(keyboardNote) }
         }
@@ -344,7 +350,8 @@ struct DebugBox: View {
 
 /* Launch arguments, for checking the screens against the mockup in the
    Simulator:  -nosplash 1   -screen gesture|voice|keys|history   -seed 1
-               -splashAt 900 (the splash as it is that many ms in)   -debug 1 */
+               -splashAt 900 (the splash as it is that many ms in)   -debug 1
+               -picture light|dark (as if the camera showed such a picture) */
 enum Launch {
     static var noSplash: Bool { UserDefaults.standard.bool(forKey: "nosplash") }
     static var debug: Bool { UserDefaults.standard.bool(forKey: "debug") }
@@ -357,7 +364,7 @@ enum Launch {
         if defaults.bool(forKey: "seed") {
             for word in ["Привет", "как", "дела"] { model.gestureWord(word) }
             model.closePhrase()
-            model.draft = "Здравствуйте! Всё хорошо."
+            model.keyboardWrote("Здравствуйте! Всё хорошо.")
             model.sendTyped()
         }
         switch defaults.string(forKey: "screen") {
@@ -366,6 +373,9 @@ enum Launch {
         case "keys": model.setMode(.keys)
         case "history": model.openHistory()
         default: break
+        }
+        if let picture = defaults.string(forKey: "picture") {
+            model.pretendPicture(light: picture == "light")
         }
     }
 }

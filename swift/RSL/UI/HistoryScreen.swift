@@ -9,7 +9,7 @@ import UIKit
 
 /* A spring that can be stepped by hand - for the drum, whose position is
    dragged, thrown and then has to settle on a row. (Everything else in the
-   app moves on SwiftUI's own springs.) Same numbers as the web app's. */
+   app moves on SwiftUI's own springs.) */
 struct StepSpring {
     var value: CGFloat
     var target: CGFloat

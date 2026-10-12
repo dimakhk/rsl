@@ -27,7 +27,7 @@ struct BodyPoints {
     var rightShoulder: Point
 }
 
-/* The arithmetic, apart from the camera: the same numbers as framer.js. */
+/* The arithmetic, apart from the camera. */
 struct Framing {
     static let widthK: CGFloat = 2.4
     static let heightK: CGFloat = 2.9

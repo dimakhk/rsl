@@ -4,9 +4,8 @@ import OnnxRuntimeBindings
 
 /* Sign recognition that runs inside the device.
 
-   The model is easy_sign's S3D, rebuilt out of 2D operators (the same file the
-   web app uses, in full precision). It reads 32 frames at a time - about one
-   second of video - and names the sign in them.
+   The model is easy_sign's S3D, rebuilt out of 2D operators. It reads 32
+   frames at a time - about one second of video - and names the sign in them.
 
    The pace sets itself. A fast device finishes a window quickly and can start
    a new one every 8 frames; a slow one gets one every 20-30. Since a rarer
@@ -192,7 +191,7 @@ final class S3DModel {
 
 /* When a window's answer becomes a word.
 
-   Measured on the lesson video (in the web app, the same model): with a
+   Measured on the lesson video: with a
    window every 8-12 frames a sign is seen several times, so demanding two
    windows in a row cuts the wrong words without losing right ones. Rarer than
    that, most signs get one window only, and the same demand would drop half

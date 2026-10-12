@@ -1,9 +1,0 @@
-{
-  "appId": "io.github.dimakhk.rsl",
-  "appName": "РЖЯ веб",
-  "webDir": "www",
-  "backgroundColor": "#821414",
-  "ios": {
-    "contentInset": "never"
-  }
-}

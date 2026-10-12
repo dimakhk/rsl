@@ -6,10 +6,13 @@ import SwiftUI
    Screens: splash -> start (empty chat) -> gestures | voice | keyboard, plus
    the history screen that slides over them.
 
-   What is real: the camera, sign recognition and the hints about where to
-   stand (Capture). What is only drawn for now, and marked TODO below: speech
-   recognition, speaking the text aloud, saving what is typed, and the chat
-   history. */
+   The three buttons at the bottom are switches. Pressing one opens its mode;
+   pressing it again closes the mode and brings back the start screen, with
+   the messages that are already there.
+
+   What is real: the camera and sign recognition (Capture). What is only drawn
+   for now, and marked TODO below: speech recognition, speaking the text
+   aloud, saving what is typed, and the chat history. */
 
 enum Mode: Equatable {
     case idle, gesture, voice, keys
@@ -19,46 +22,40 @@ struct Message: Identifiable, Equatable {
     enum Side { case left, right }               // gestures on the right, voice and keyboard on the left
 
     struct Word: Identifiable, Equatable {
-        let id = UUID()
+        var id = UUID()
         var text: String
     }
 
     let id = UUID()
     var side: Side
-    var words: [Word] = []                       // arrive one by one (gestures, the voice demo)
-    var text: String? = nil                      // or a whole message at once (keyboard)
+    var words: [Word] = []                       // they arrive one by one
     var dots = false                             // three dots: more is coming
-    var flightFrom: CGRect? = nil                // a typed message takes off from the input strip
 }
 
 final class ChatModel: ObservableObject {
-    @Published var mode = Mode.idle
-    @Published var gestureOn = false             // recognition running (not paused)
-    @Published var micOn = false
+    @Published private(set) var mode = Mode.idle
     @Published var sound = true
-    @Published var historyOpen = false
+    @Published private(set) var historyOpen = false
     // TODO: функция будет добавлена позже (заглушки)
-    @Published var chats = ["Чат #1", "Чат #2", "Чат #3", "Чат #4"]
-    @Published var current = 0
-    @Published var messages: [Message] = []
-    @Published var plaque: String? = nil         // «Подойдите ближе», «Встаньте по центру» ...
-    @Published var personSeen = false
-    @Published var cameraReady = false
-    @Published var splashDone = false
-    @Published var pillsIn = [false, false, false]
-    @Published var introAllowed = false
+    @Published private(set) var chats = ["Чат #1", "Чат #2", "Чат #3", "Чат #4"]
+    @Published private(set) var current = 0
+    @Published private(set) var messages: [Message] = []
+    @Published private(set) var personSeen = false
+    @Published private(set) var cameraReady = false
+    @Published private(set) var pictureIsLight = false   // the top of the camera picture, under the bar
+    @Published private(set) var splashDone = false
+    @Published private(set) var pillsIn = [false, false, false]
+    @Published private(set) var introAllowed = false
     @Published var debugShown = false
-    @Published var draft = ""
-    @Published var plusTurns = 0
-    @Published var closeTurns = 0
-    @Published var keysCloseTurns = 0
+    @Published private(set) var plusTurns = 0
+    @Published private(set) var closeTurns = 0
+    @Published private(set) var typed = ""       // what the keyboard has written and not yet sent
 
     let capture = Capture()
     var reduceMotion = false
-    var inputFrame = CGRect.zero                 // where the input strip's text is, in the phone's coordinates
 
-    private var before = Mode.idle               // where the keyboard was opened from
     private var openID: UUID? = nil              // the gesture bubble still taking words
+    private var draftID: UUID? = nil             // the bubble being typed
     private var phraseTimer: DispatchWorkItem?
     private var ghostTimer: DispatchWorkItem?
     private var voiceTimers: [DispatchWorkItem] = []
@@ -72,23 +69,22 @@ final class ChatModel: ObservableObject {
 
     var title: String { chats.indices.contains(current) ? chats[current] : "" }
     var introShown: Bool { introAllowed && mode == .idle && messages.isEmpty }
-    var glow: Bool { personSeen && mode == .gesture && gestureOn }
+    var glow: Bool { personSeen && mode == .gesture }
 
     init() {
         capture.onWord = { [weak self] word in
-            guard let self = self, self.mode == .gesture, self.gestureOn else { return }
+            guard let self = self, self.mode == .gesture else { return }
             self.gestureWord(word)
         }
         capture.onListening = { [weak self] on in
-            guard let self = self, self.mode == .gesture, self.gestureOn else { return }
+            guard let self = self, self.mode == .gesture else { return }
             self.listening(on)
         }
-        capture.onMessage = { [weak self] text in
-            guard let self = self else { return }
-            self.plaque = self.mode == .gesture ? text : nil
-        }
+        // Hints for the person in front of the camera («Подойдите ближе» ...)
+        // are switched off for now. Capture still works them out (onMessage).
         capture.onPerson = { [weak self] seen in self?.personSeen = seen }
         capture.onCamera = { [weak self] on in self?.cameraReady = on }
+        capture.onPicture = { [weak self] light in self?.pictureIsLight = light }
     }
 
     private func animate(_ animation: Animation, _ change: () -> Void) {
@@ -111,7 +107,6 @@ final class ChatModel: ObservableObject {
             capture.pause()
             closePhrase()
             personSeen = false
-            plaque = nil
             // The camera is released once its block has slid out of sight.
             cameraRelease?.cancel()
             cameraRelease = later(0.6) { [weak self] in
@@ -119,50 +114,25 @@ final class ChatModel: ObservableObject {
                 self.capture.stop()
             }
         }
-        if prev == .voice {
-            micOn = false
-            stopVoice()
-        }
+        if prev == .voice { stopVoice() }
+        if prev == .keys { finishTyping() }
+
         if next == .gesture {
             cameraRelease?.cancel()
-            gestureOn = true
             capture.start()
         }
-        if next == .voice {
-            micOn = true
-            startVoice()
-        }
-        if next == .keys { before = prev }
+        if next == .voice { startVoice() }
         mode = next
     }
 
-    func tapGesture() {
-        if mode != .gesture { return setMode(.gesture) }
-        // pressed again: pause, the picture stays
-        gestureOn.toggle()
-        if gestureOn {
-            capture.start()
-        } else {
-            capture.pause()
-            closePhrase()
-            personSeen = false
-            plaque = nil
-        }
-    }
+    /* The three buttons: open the mode, or close it if it is the open one. */
+    func tapGesture() { setMode(mode == .gesture ? .idle : .gesture) }
+    func tapVoice() { setMode(mode == .voice ? .idle : .voice) }
+    func tapKeys() { setMode(mode == .keys ? .idle : .keys) }
 
-    func tapVoice() {
-        if mode != .voice { return setMode(.voice) }
-        micOn.toggle()
-        if micOn { startVoice() } else { stopVoice() }
-    }
-
-    func tapKeys() {
-        setMode(.keys)
-    }
-
+    /* The keyboard was put away: a tap beside it, or a swipe down. */
     func closeKeys() {
-        keysCloseTurns += 1
-        setMode(before == .keys ? .idle : before)
+        if mode == .keys { setMode(.idle) }
     }
 
     func toggleSound() {
@@ -216,8 +186,7 @@ final class ChatModel: ObservableObject {
         if on {
             if index(openID) == nil {
                 ghostTimer = later(0.4) { [weak self] in
-                    guard let self = self, self.index(self.openID) == nil,
-                          self.mode == .gesture, self.gestureOn else { return }
+                    guard let self = self, self.index(self.openID) == nil, self.mode == .gesture else { return }
                     self.openID = self.addBubble(.right, dots: true)
                 }
             }
@@ -241,26 +210,48 @@ final class ChatModel: ObservableObject {
         openID = nil
     }
 
-    /* Enter sends: the text takes off from the strip and lands in the feed as
-       a bubble on the left. */
-    func sendTyped() {
-        let text = draft.trimmingCharacters(in: .whitespacesAndNewlines)
-        guard !text.isEmpty else { return }
-        draft = ""
-        // TODO: функция будет добавлена позже (сообщение нигде не сохраняется)
-        var m = Message(side: .left)
-        m.text = text
-        m.flightFrom = reduceMotion ? nil : inputFrame
-        if reduceMotion {
-            animate(Motion.fade) { messages.append(m) }
-        } else {
-            messages.append(m)                           // it flies in by itself (BubbleRow)
-        }
-    }
-
     func clearFeed() {
         closePhrase()
+        draftID = nil
+        typed = ""
         messages.removeAll()
+    }
+
+    // MARK: keyboard
+
+    /* There is no input field: what is typed is written straight into the
+       chat, as a bubble on the left with three dots while it is being typed.
+       Return sends it; putting the keyboard away sends it too, so nothing
+       typed is lost. */
+    func keyboardWrote(_ text: String) {
+        typed = text
+        let parts = text.split(whereSeparator: { $0 == " " || $0 == "\n" }).map(String.init)
+        if parts.isEmpty {
+            if draftID != nil {
+                remove(draftID)
+                draftID = nil
+            }
+            return
+        }
+        if index(draftID) == nil { draftID = addBubble(.left, dots: true) }
+        guard let i = index(draftID) else { return }
+        // A word keeps its place while it is being typed; only a new word arrives.
+        let old = messages[i].words
+        let words = parts.enumerated().map { n, part in
+            Message.Word(id: n < old.count ? old[n].id : UUID(), text: part)
+        }
+        animate(.spring(response: 0.3, dampingFraction: 0.9)) { messages[i].words = words }
+    }
+
+    func sendTyped() {
+        // TODO: функция будет добавлена позже (сообщение нигде не сохраняется)
+        setDots(draftID, false)
+        draftID = nil
+        typed = ""
+    }
+
+    private func finishTyping() {
+        sendTyped()
     }
 
     // MARK: voice
@@ -309,7 +300,7 @@ final class ChatModel: ObservableObject {
        choosing a chat only returns to the start screen. */
     func openHistory() {
         if historyOpen { return }
-        if mode == .keys { closeKeys() }
+        closeKeys()
         historyOpen = true
     }
 
@@ -347,6 +338,16 @@ final class ChatModel: ObservableObject {
             self?.adding = false
             self?.openChat(index)
         }
+    }
+
+    /* For screenshots in the Simulator, which has no camera: as if the camera
+       were showing a light or a dark picture. */
+    @Published private(set) var pretendedPicture: Bool? = nil
+
+    func pretendPicture(light: Bool) {
+        pretendedPicture = light
+        cameraReady = true
+        pictureIsLight = light
     }
 
     // MARK: start

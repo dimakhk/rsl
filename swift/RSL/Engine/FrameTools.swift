@@ -77,6 +77,29 @@ enum FrameTools {
         return motion
     }
 
+    /* How light a part of a BGRA frame is, 0...1: the mean over a coarse grid
+       of points. For choosing the colour of what is drawn over the picture. */
+    static func lightness(_ buffer: CVPixelBuffer, in rect: CGRect) -> Float? {
+        guard CVPixelBufferGetPixelFormatType(buffer) == kCVPixelFormatType_32BGRA else { return nil }
+        let width = CVPixelBufferGetWidth(buffer), height = CVPixelBufferGetHeight(buffer)
+        guard width > 0, height > 0, rect.width > 0, rect.height > 0 else { return nil }
+        CVPixelBufferLockBaseAddress(buffer, .readOnly)
+        defer { CVPixelBufferUnlockBaseAddress(buffer, .readOnly) }
+        guard let base = CVPixelBufferGetBaseAddress(buffer)?.assumingMemoryBound(to: UInt8.self) else { return nil }
+        let rowBytes = CVPixelBufferGetBytesPerRow(buffer)
+        let columns = 24, rows = 8
+        var sum = 0
+        for gy in 0..<rows {
+            let y = min(height - 1, max(0, Int(rect.minY + (CGFloat(gy) + 0.5) / CGFloat(rows) * rect.height)))
+            for gx in 0..<columns {
+                let x = min(width - 1, max(0, Int(rect.minX + (CGFloat(gx) + 0.5) / CGFloat(columns) * rect.width)))
+                let p = base + y * rowBytes + x * 4
+                sum += 114 * Int(p[0]) + 587 * Int(p[1]) + 299 * Int(p[2])      // blue, green, red
+            }
+        }
+        return Float(sum) / Float(columns * rows) / 255_000
+    }
+
     /* The crop letterboxed into 224x224 on grey (114), as SignFlow-R was
        trained, and packed as a JPEG. */
     static func letterboxJPEG(_ buffer: CVPixelBuffer, crop: (x: Int, y: Int, w: Int, h: Int),

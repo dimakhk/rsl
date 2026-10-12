@@ -2,12 +2,14 @@ import AVFoundation
 import SwiftUI
 import UIKit
 
-/* The chat: top bar, camera, messages, the wave, the three pills and the
-   input strip. Every element is placed where the mockup has it, in mockup
-   points from the top-left corner of the phone. */
+/* The chat: top bar, camera, messages and the keyboard's input. Every element
+   is placed where the mockup has it, in mockup points from the top-left
+   corner of the phone. */
 
 // MARK: top bar
 
+/* The bar's colour follows what is under it: burgundy on the beige screen;
+   over the camera, beige on a dark picture and black on a light one. */
 struct TopBar: View {
     @ObservedObject var model: ChatModel
     @Environment(\.metrics) private var m
@@ -15,11 +17,13 @@ struct TopBar: View {
 
     var body: some View {
         let u = m.u
-        let cam: CGFloat = model.mode == .gesture ? 1 : 0
+        let overCamera = model.mode == .gesture
+        let light = model.cameraReady && model.pictureIsLight
+        let color: Color = overCamera ? (light ? .black : Palette.beige) : Palette.wine
         ZStack(alignment: .topLeading) {
             // Icons are 24-28 wide, the button around them never less than 44.
             Button(action: model.openHistory) {
-                TwoTone(cam: cam) { IconView(icon: Icons.history, width: 24 * u) }
+                IconView(icon: Icons.history, width: 24 * u)
                     .frame(width: 44 * u, height: 44 * u)
                     .contentShape(Rectangle())
             }
@@ -27,31 +31,33 @@ struct TopBar: View {
             .accessibilityLabel("История чатов")
             .place(x: 31 * u, y: -6 * u, width: 44 * u, height: 44 * u)
 
-            TwoTone(cam: cam) {
-                Text(model.title)
-                    .font(Typeface.font(20 * u))
-                    .lineLimit(1)
-            }
-            .place(x: 80 * u, y: 0, width: m.width - 160 * u, height: 32 * u)
-            .contentShape(Rectangle())
-            .onTapGesture(count: 3) { model.debugShown.toggle() }    // what the model sees, for checking
-            .accessibilityAddTraits(.isHeader)
+            Text(model.title)
+                .font(Typeface.font(20 * u))
+                .lineLimit(1)
+                .frame(width: m.width - 160 * u, height: 32 * u)
+                // The tap area is set before the title is moved into place:
+                // set after, it stays where the title was laid out - at the
+                // left edge, over the history button.
+                .contentShape(Rectangle())
+                .onTapGesture(count: 3) { model.debugShown.toggle() }    // what the model sees, for checking
+                .accessibilityAddTraits(.isHeader)
+                .offset(x: 80 * u)
 
             Button(action: model.toggleSound) {
-                TwoTone(cam: cam) {
-                    SoundIcon(v: model.sound ? 1 : 0, width: 28 * u)
-                        .animation(Motion.pick(Motion.soft, reduce: reduce), value: model.sound)
-                }
-                .frame(width: 44 * u, height: 44 * u)
-                .contentShape(Rectangle())
+                SoundIcon(v: model.sound ? 1 : 0, width: 28 * u)
+                    .animation(Motion.pick(Motion.soft, reduce: reduce), value: model.sound)
+                    .frame(width: 44 * u, height: 44 * u)
+                    .contentShape(Rectangle())
             }
             .buttonStyle(PressStyle())
             .accessibilityLabel("Озвучка")
             .accessibilityValue(model.sound ? "включена" : "выключена")
             .place(x: m.width - 76 * u, y: -6 * u, width: 44 * u, height: 44 * u)
         }
+        .foregroundStyle(color)
         .frame(width: m.width, height: 32 * u, alignment: .topLeading)
         .animation(Motion.pick(Motion.screen, reduce: reduce), value: model.mode)
+        .animation(Motion.pick(.easeInOut(duration: 0.3), reduce: reduce), value: light)
     }
 }
 
@@ -70,6 +76,7 @@ struct CameraPreview: UIViewRepresentable {
     func makeUIView(context: Context) -> PreviewView {
         let view = PreviewView()
         view.backgroundColor = Palette.uiWine
+        view.isUserInteractionEnabled = false
         view.previewLayer.session = camera.session
         view.previewLayer.videoGravity = .resizeAspectFill
         camera.attach(preview: view.previewLayer)            // the camera keeps it upright
@@ -97,23 +104,14 @@ struct CameraBlock: View {
                 .shadow(color: Palette.wine.opacity(0.7), radius: 13 * u, y: 6 * u)
                 .opacity(model.glow ? (pulse ? 1 : 0.35) : 0)
 
-            ZStack(alignment: .bottom) {
+            ZStack {
                 Palette.wine
                 CameraPreview(camera: model.capture.camera)
                     .opacity(model.cameraReady ? 1 : 0)
                     .animation(.easeInOut(duration: 0.35), value: model.cameraReady)
-                // A burgundy haze at the top of the picture: the beige bar
-                // over it must read on a white wall as well as in a dark room.
-                LinearGradient(stops: [
-                    .init(color: Palette.wine.opacity(0.72), location: 0),
-                    .init(color: Palette.wine.opacity(0.45), location: 0.55),
-                    .init(color: Palette.wine.opacity(0), location: 1),
-                ], startPoint: .top, endPoint: .bottom)
-                    .frame(height: m.top + 78 * u)
-                    .frame(maxHeight: .infinity, alignment: .top)
-                    .allowsHitTesting(false)
-                plaque
-                    .padding(.bottom, 22 * u)
+                if let light = model.pretendedPicture {      // Simulator screenshots only
+                    Color(white: light ? 0.9 : 0.15)
+                }
             }
             .clipShape(shape)
         }
@@ -129,84 +127,64 @@ struct CameraBlock: View {
                 withAnimation(.easeInOut(duration: 0.5)) { pulse = on }
             }
         }
-        .onAppear { model.capture.setView(aspect: m.width / height) }
-        .onChange(of: m) { _, now in model.capture.setView(aspect: now.width / (now.top + 408 * now.u)) }
-        .accessibilityHidden(!open)
-    }
-
-    /* «Подойдите ближе», «Встаньте по центру» ... slides up into the camera;
-       a new text replaces the old one the same way. */
-    private var plaque: some View {
-        let u = m.u
-        return ZStack {
-            if let text = model.plaque {
-                Text(text)
-                    .font(Typeface.font(17 * u))
-                    .multilineTextAlignment(.center)
-                    .foregroundStyle(Palette.beige)
-                    .padding(.horizontal, 18 * u)
-                    .padding(.vertical, 7 * u)
-                    .background(RoundedRectangle(cornerRadius: 20 * u).fill(Palette.wine.opacity(0.78)))
-                    .frame(maxWidth: 320 * u)
-                    .transition(AnyTransition.rise(16 * u, reduce: reduce))
-                    .id(text)
-            }
+        .onAppear { model.capture.setView(aspect: m.width / height, bar: (m.top + 50 * u) / height) }
+        .onChange(of: m) { _, now in
+            let h = now.top + 408 * now.u
+            model.capture.setView(aspect: now.width / h, bar: (now.top + 50 * now.u) / h)
         }
-        .animation(Motion.pick(.spring(response: 0.32, dampingFraction: 0.85), reduce: reduce), value: model.plaque)
-        .accessibilityAddTraits(.updatesFrequently)
+        .allowsHitTesting(false)
+        .accessibilityHidden(true)
     }
 }
 
 // MARK: messages
 
-private let tailIcon = Icon(x: 157, y: 19, width: 22, height: 25, parts: Icons.bubble.parts)
+/* A message bubble: the rounded body and its tail are one outline.
+
+   The measures are the designer's (icons/bubble.svg: a 177x40 body with
+   corners of 20 and a tail at the bottom corner), so a one-line bubble is
+   exactly that drawing, and a taller one keeps the same corner. The tail
+   reaches a little outside the bubble's own box: 1.4 to the side, 3.1 down. */
+struct BubbleShape: Shape {
+    var tailOnRight: Bool
+    var u: CGFloat
+
+    func path(in rect: CGRect) -> Path {
+        let w = rect.width, h = rect.height
+        let r = min(20 * u, h / 2, w / 2)
+        var p = Path()
+        p.move(to: CGPoint(x: r, y: 0))
+        p.addLine(to: CGPoint(x: w - r, y: 0))
+        p.addArc(center: CGPoint(x: w - r, y: r), radius: r, startAngle: .degrees(-90), endAngle: .degrees(0), clockwise: false)
+        // down the side to the tail, round its tip, and back along the bottom
+        p.addLine(to: CGPoint(x: w, y: max(r, h - 21 * u)))
+        p.addLine(to: CGPoint(x: w + 1.194 * u, y: h - 1.497 * u))
+        p.addCurve(to: CGPoint(x: w - 3.441 * u, y: h + 2.696 * u),
+                   control1: CGPoint(x: w + 1.351 * u, y: h + 1.064 * u),
+                   control2: CGPoint(x: w - 0.909 * u, y: h + 3.108 * u))
+        p.addLine(to: CGPoint(x: max(r, w - 20 * u), y: h))
+        p.addLine(to: CGPoint(x: r, y: h))
+        p.addArc(center: CGPoint(x: r, y: h - r), radius: r, startAngle: .degrees(90), endAngle: .degrees(180), clockwise: false)
+        p.addLine(to: CGPoint(x: 0, y: r))
+        p.addArc(center: CGPoint(x: r, y: r), radius: r, startAngle: .degrees(180), endAngle: .degrees(270), clockwise: false)
+        p.closeSubpath()
+        // drawn with the tail on the right; mirrored for the other side
+        var place = CGAffineTransform(translationX: rect.minX, y: rect.minY)
+        if !tailOnRight { place = place.translatedBy(x: w, y: 0).scaledBy(x: -1, y: 1) }
+        return p.applying(place)
+    }
+}
 
 struct BubbleRow: View {
     let message: Message
-    @ObservedObject var model: ChatModel
     @Environment(\.metrics) private var m
     @Environment(\.accessibilityReduceMotion) private var reduce
-    @State private var flight = CGSize.zero
-    @State private var took = false
 
     var body: some View {
         let u = m.u
         let right = message.side == .right
         HStack(spacing: 0) {
             if right { Spacer(minLength: 0) }
-            content
-                .padding(.horizontal, 20 * u)
-                .padding(.vertical, 7.5 * u)
-                .frame(minHeight: 40 * u)
-                .foregroundStyle(Palette.beige)
-                .background(RoundedRectangle(cornerRadius: 20 * u).fill(Palette.wine))
-                // The tail is the one from icons/bubble.svg, cut out by its own bounds.
-                .background(alignment: right ? .bottomTrailing : .bottomLeading) {
-                    IconView(icon: tailIcon, width: 22 * u)
-                        .foregroundStyle(Palette.wine)
-                        .scaleEffect(x: right ? 1 : -1, y: 1)
-                        .offset(x: right ? 2 * u : -2 * u, y: 4 * u)
-                }
-                .frame(maxWidth: 295 * u, alignment: right ? .trailing : .leading)     // ~75% of the screen
-                .background(GeometryReader { g in
-                    Color.clear.onAppear { takeOff(to: g.frame(in: .named("phone"))) }
-                })
-                .offset(flight)
-            if !right { Spacer(minLength: 0) }
-        }
-        .padding(right ? .trailing : .leading, right ? 44 * u : 42.5 * u)
-        .frame(width: m.width)
-        .accessibilityElement(children: .combine)
-    }
-
-    @ViewBuilder private var content: some View {
-        let u = m.u
-        if let text = message.text {
-            Text(text)
-                .golos(20, line: 25, u: u)
-                .multilineTextAlignment(.leading)
-                .fixedSize(horizontal: false, vertical: true)
-        } else {
             FlowLayout(spacing: 5.6 * u, lineHeight: 25 * u) {
                 ForEach(message.words) { word in
                     Text(word.text)
@@ -221,17 +199,18 @@ struct BubbleRow: View {
                         .transition(AnyTransition.opacity)
                 }
             }
+            .padding(.horizontal, 20 * u)
+            .padding(.vertical, 7.5 * u)
+            .frame(minHeight: 40 * u)
+            .foregroundStyle(Palette.beige)
+            .background(BubbleShape(tailOnRight: right, u: u).fill(Palette.wine))
+            .frame(maxWidth: 295 * u, alignment: right ? .trailing : .leading)     // ~75% of the screen
+            if !right { Spacer(minLength: 0) }
         }
-    }
-
-    /* A typed message starts where the input strip's text was and lands here. */
-    private func takeOff(to frame: CGRect) {
-        guard !took, let from = message.flightFrom else { return }
-        took = true
-        flight = CGSize(width: from.minX - frame.minX, height: from.minY - frame.minY)
-        DispatchQueue.main.async {
-            withAnimation(.spring(response: 0.42, dampingFraction: 0.8)) { flight = .zero }
-        }
+        .padding(right ? .trailing : .leading, right ? 44 * u : 42.5 * u)
+        .frame(width: m.width)
+        .accessibilityElement(children: .ignore)
+        .accessibilityLabel(message.words.map(\.text).joined(separator: " "))
     }
 }
 
@@ -247,7 +226,7 @@ struct FeedView: View {
             ScrollView(.vertical, showsIndicators: false) {
                 VStack(spacing: 12 * u) {
                     ForEach(model.messages) { message in
-                        BubbleRow(message: message, model: model)
+                        BubbleRow(message: message)
                             // A bubble grows out of its tail.
                             .transition(AnyTransition.grow(from: message.side == .right ? .bottomTrailing : .bottomLeading,
                                                            reduce: reduce))
@@ -258,6 +237,8 @@ struct FeedView: View {
                 .frame(width: m.width)
                 Color.clear.frame(height: 0).id("end")
             }
+            // With the keyboard up: a swipe down the messages puts it away...
+            .scrollDismissesKeyboard(.interactively)
             .onChange(of: model.messages) { _, _ in
                 withAnimation(Motion.pick(Motion.soft, reduce: reduce)) { proxy.scrollTo("end", anchor: .bottom) }
             }
@@ -265,6 +246,9 @@ struct FeedView: View {
                 proxy.scrollTo("end", anchor: .bottom)
             }
         }
+        // ...and so does a tap anywhere on them.
+        .contentShape(Rectangle())
+        .onTapGesture { model.closeKeys() }
         // Messages dissolve into the edges instead of being cut off.
         .mask(LinearGradient(stops: [
             .init(color: .clear, location: 0),
@@ -275,143 +259,60 @@ struct FeedView: View {
     }
 }
 
-// MARK: keyboard strip
+// MARK: keyboard
 
-/* A text field that grows with its text, up to four lines. Return sends. */
-struct GrowingTextView: UIViewRepresentable {
-    @Binding var text: String
-    @Binding var height: CGFloat
-    var focused: Bool
-    var fontSize: CGFloat
-    var lineHeight: CGFloat
-    var inset: CGFloat
-    var maxHeight: CGFloat
-    var onSend: () -> Void
+/* What the keyboard types into. It is not shown: the text appears in the
+   chat as it is typed (ChatModel.keyboardWrote). Return sends. */
+struct KeyboardInput: UIViewRepresentable {
+    @ObservedObject var model: ChatModel
 
-    func makeCoordinator() -> Coordinator { Coordinator(self) }
-
-    private var attributes: [NSAttributedString.Key: Any] {
-        let font = Typeface.uiFont(fontSize)
-        let style = NSMutableParagraphStyle()
-        style.minimumLineHeight = lineHeight
-        style.maximumLineHeight = lineHeight
-        return [.font: font, .foregroundColor: Palette.uiBeige, .paragraphStyle: style,
-                .baselineOffset: (lineHeight - font.lineHeight) / 4]
-    }
+    func makeCoordinator() -> Coordinator { Coordinator(model) }
 
     func makeUIView(context: Context) -> UITextView {
         let view = UITextView()
         view.backgroundColor = .clear
-        view.tintColor = Palette.uiBeige                 // the caret
-        view.textColor = Palette.uiBeige
-        view.font = Typeface.uiFont(fontSize)
+        view.textColor = .clear
+        view.tintColor = .clear                          // no caret
         view.returnKeyType = .send
         view.autocapitalizationType = .sentences
-        view.textContainerInset = UIEdgeInsets(top: inset, left: 0, bottom: inset, right: 0)
-        view.textContainer.lineFragmentPadding = 0
-        view.showsVerticalScrollIndicator = false
         view.isScrollEnabled = false
-        view.typingAttributes = attributes
         view.delegate = context.coordinator
         view.accessibilityLabel = "Сообщение"
-        view.setContentCompressionResistancePriority(.defaultLow, for: .horizontal)
+        view.accessibilityIdentifier = "message-input"
         return view
     }
 
     func updateUIView(_ view: UITextView, context: Context) {
-        context.coordinator.parent = self
-        if view.text != text {
-            view.text = text
-            view.typingAttributes = attributes
-            context.coordinator.fit(view)
-        }
-        if focused && !view.isFirstResponder {
-            DispatchQueue.main.async { view.becomeFirstResponder() }
-        } else if !focused && view.isFirstResponder {
+        if view.text != model.typed { view.text = model.typed }
+        let wanted = model.mode == .keys
+        if wanted && !view.isFirstResponder {
+            DispatchQueue.main.async { if self.model.mode == .keys { view.becomeFirstResponder() } }
+        } else if !wanted && view.isFirstResponder {
             view.resignFirstResponder()
         }
     }
 
     final class Coordinator: NSObject, UITextViewDelegate {
-        var parent: GrowingTextView
+        let model: ChatModel
 
-        init(_ parent: GrowingTextView) { self.parent = parent }
+        init(_ model: ChatModel) { self.model = model }
 
         func textViewDidChange(_ view: UITextView) {
-            parent.text = view.text
-            view.typingAttributes = parent.attributes
-            fit(view)
+            model.keyboardWrote(view.text)
         }
 
         func textView(_ view: UITextView, shouldChangeTextIn range: NSRange, replacementText text: String) -> Bool {
             if text == "\n" {
-                parent.onSend()
+                model.sendTyped()
+                view.text = ""
                 return false
             }
             return true
         }
 
-        func fit(_ view: UITextView) {
-            let width = view.bounds.width > 0 ? view.bounds.width : 200
-            let natural = view.sizeThatFits(CGSize(width: width, height: .greatestFiniteMagnitude)).height
-            let wanted = min(max(natural, parent.lineHeight + 2 * parent.inset), parent.maxHeight)
-            view.isScrollEnabled = natural > parent.maxHeight + 0.5
-            if abs(parent.height - wanted) > 0.5 {
-                DispatchQueue.main.async { self.parent.height = wanted }
-            }
+        /* The keyboard went away by itself (swiped down): leave the mode too. */
+        func textViewDidEndEditing(_ view: UITextView) {
+            model.closeKeys()
         }
-    }
-}
-
-/* The strip that rides on top of the on-screen keyboard. */
-struct KeyboardBar: View {
-    @ObservedObject var model: ChatModel
-    @Binding var barHeight: CGFloat
-    @Environment(\.metrics) private var m
-    @Environment(\.accessibilityReduceMotion) private var reduce
-    @State private var textHeight: CGFloat = 32
-
-    var body: some View {
-        let u = m.u
-        ZStack(alignment: .bottomTrailing) {
-            GrowingTextView(text: $model.draft, height: $textHeight, focused: model.mode == .keys,
-                            fontSize: 18 * u, lineHeight: 24 * u, inset: 4 * u, maxHeight: 104 * u,
-                            onSend: model.sendTyped)
-                .frame(height: max(32 * u, textHeight))
-                .background(GeometryReader { g -> Color in
-                    let frame = g.frame(in: .named("phone"))
-                    DispatchQueue.main.async { model.inputFrame = frame }
-                    return Color.clear
-                })
-                .padding(.leading, 22 * u)
-                .padding(.trailing, 56 * u)
-                .padding(.vertical, 2 * u)
-
-            // The cross turns a quarter and the strip goes down with the keyboard.
-            Button(action: model.closeKeys) {
-                IconView(icon: Icons.close, width: 32 * u)
-                    .rotationEffect(.degrees(Double(model.keysCloseTurns) * 90))
-                    .animation(Motion.pick(Motion.bouncy, reduce: reduce), value: model.keysCloseTurns)
-                    .frame(width: 44 * u, height: 44 * u)
-                    .contentShape(Rectangle())
-            }
-            .buttonStyle(PressStyle())
-            .accessibilityLabel("Закрыть клавиатуру")
-            .padding(.trailing, 13 * u)
-            .offset(y: 4 * u)
-        }
-        .foregroundStyle(Palette.beige)
-        .frame(width: m.width)
-        .background(
-            // Exactly the strip and no lower: the keyboard of iOS 26 is
-            // glass, and anything burgundy under it would tint the keys.
-            UnevenRoundedRectangle(topLeadingRadius: 22 * u, topTrailingRadius: 22 * u)
-                .fill(Palette.wine)
-        )
-        .background(GeometryReader { g -> Color in
-            let h = g.size.height
-            DispatchQueue.main.async { if abs(barHeight - h) > 0.5 { barHeight = h } }
-            return Color.clear
-        })
     }
 }

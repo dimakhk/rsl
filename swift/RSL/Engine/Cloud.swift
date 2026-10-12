@@ -16,7 +16,8 @@ import Foundation
 
    Frames: the crop, letterboxed into 224x224 on grey as the model was
    trained, JPEG, 15 a second - SignFlow-R reads every second frame of a
-   30 fps video. About 0.6 Mbit/s. The protocol is the web app's (cloud.js). */
+   30 fps video. About 0.6 Mbit/s. The other end is the server's own program,
+   which is not in this repository. */
 
 final class Cloud: NSObject, URLSessionWebSocketDelegate {
     static let site = URL(string: "https://dimakhk.github.io/rsl/server.json")!

@@ -1,28 +1,7 @@
 import SwiftUI
 
-/* Small pieces the screens are built from: the two-tone bar content, the
-   icons that redraw themselves, the pills, the wave. */
-
-/* Over the camera the bar turns beige with a soft shadow, so that it reads on
-   any picture. Both versions are there all the time and cross-fade with `cam`
-   (0 camera away ... 1 camera open). */
-struct TwoTone<Content: View>: View {
-    let cam: CGFloat
-    @ViewBuilder var content: Content
-    @Environment(\.metrics) private var m
-
-    var body: some View {
-        ZStack {
-            content
-                .foregroundStyle(Palette.wine)
-                .opacity(1 - cam)
-            content
-                .foregroundStyle(Palette.beige)
-                .shadow(color: Color(red: 80 / 255, green: 8 / 255, blue: 8 / 255).opacity(0.7), radius: 2 * m.u, y: 1 * m.u)
-                .opacity(cam)
-        }
-    }
-}
+/* Small pieces the screens are built from: the icons that redraw themselves,
+   the pills, the wave, the typing dots, words that wrap. */
 
 /* The sound icon. On: the arcs fan out of the speaker one after another.
    Off: they fold back and the slash is drawn. Both end as the original files.

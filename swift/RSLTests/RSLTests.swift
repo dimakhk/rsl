@@ -5,8 +5,8 @@ import XCTest
 
 /* What can be checked without a camera and without a person: that the model
    inside the app answers as it does on a PC, that frames are turned into the
-   numbers it expects, and that the arithmetic taken over from the web app
-   gives the same results.
+   numbers it expects, and that the arithmetic of framing and of accepting a
+   word gives the results worked out by hand.
 
    Lines starting with RSLNOTE are picked out of the log by the workflow and
    shown on the run's page. */
@@ -158,6 +158,15 @@ final class FrameTests: XCTestCase {
         }
     }
 
+    func testLightnessOfAPart() throws {
+        let buffer = try picture()
+        // the green band along the top: 0.587; the red half under it: 0.299
+        let band = try XCTUnwrap(FrameTools.lightness(buffer, in: CGRect(x: 0, y: 0, width: 640, height: 48)))
+        XCTAssertEqual(band, 0.587, accuracy: 0.01)
+        let red = try XCTUnwrap(FrameTools.lightness(buffer, in: CGRect(x: 0, y: 60, width: 320, height: 400)))
+        XCTAssertEqual(red, 0.299, accuracy: 0.01)
+    }
+
     func testLetterboxIsAJPEGOf224() throws {
         let buffer = try picture()
         let data = try XCTUnwrap(FrameTools.letterboxJPEG(buffer, crop: FrameTools.clamp(nil, width: 640, height: 480)))
@@ -185,8 +194,7 @@ final class FramingTests: XCTestCase {
                    rightShoulder: .init(x: centre - shoulders / 2, y: y, v: 1))
     }
 
-    /* The numbers framer.js gives for the same input (720x1280 frame,
-       shoulders 0.3 of the width at 45% of the height). */
+    /* A 720x1280 frame, shoulders 0.3 of the width at 45% of the height. */
     func testCropInShoulderWidths() throws {
         let t = try XCTUnwrap(Framing.target(person(shoulders: 0.3), width: 720, height: 1280))
         XCTAssertEqual(t.s, 216, accuracy: 0.01)                    // 0.3 * 720; the neck gives 185.6

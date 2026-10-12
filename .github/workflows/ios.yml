@@ -1,11 +1,12 @@
-# Собирает приложение для iPhone: файл .ipa без подписи.
-# Подпись ставит Sideloadly при установке на телефон (docs/ios-install.md).
+# Собирает приложение для iPhone (папка swift/): проверяет его тестами в
+# симуляторе - в том числе нажимает все кнопки, - снимает экраны и делает
+# файл .ipa без подписи. Подпись ставит Sideloadly при установке
+# (docs/ios-install.md).
 #
 # Запускается только:
 #   - кнопкой «Run workflow» на вкладке Actions;
-#   - при отправке изменений в ветку ios.
-# На каждое изменение в main сборка не идёт: Mac в GitHub Actions - самая
-# дорогая машина (в закрытом репозитории её минуты считаются в 10 раз быстрее).
+#   - при отправке в ветку ios изменений в папке swift/.
+# На изменения в main сборка не идёт.
 
 name: iOS app (.ipa)
 
@@ -13,9 +14,10 @@ on:
   workflow_dispatch:
   push:
     branches: [ios]
-    paths-ignore:
-      - "swift/**"                    # the app in Swift has its own workflow
-      - ".github/workflows/ios-swift.yml"
+    paths:
+      - "swift/**"
+      - "server.json"
+      - ".github/workflows/ios.yml"
 
 permissions:
   contents: read
@@ -26,55 +28,129 @@ concurrency:
 
 jobs:
   build:
-    name: Build unsigned .ipa
+    name: Test, screenshots, unsigned .ipa
     runs-on: macos-26
-    timeout-minutes: 30
+    timeout-minutes: 60
 
     steps:
       - uses: actions/checkout@v5
 
-      - uses: actions/setup-node@v5
-        with:
-          node-version: 22
-          cache: npm
+      # Icons.swift from the SVG drawings, and the packed copy of server.json.
+      - name: Prepare generated files
+        run: python3 swift/tools/prepare.py
 
-      - name: Install Capacitor
-        run: npm ci
+      - name: Write the Xcode project
+        run: |
+          brew list xcodegen >/dev/null 2>&1 || brew install xcodegen
+          cd swift && xcodegen generate
 
-      # Copies the web app into www/ and from there into the Xcode project.
-      - name: Pack the web app into the iOS project
-        run: npm run ios:sync
-
-      - name: Build (no code signing)
+      - name: Pick and start a simulator
+        id: sim
         run: |
           xcodebuild -version
-          if ! xcodebuild \
-              -project ios/App/App.xcodeproj \
-              -scheme App \
-              -configuration Release \
-              -sdk iphoneos \
-              -destination 'generic/platform=iOS' \
+          # A 393x852 phone, as in the mockup: the screenshots can then be laid
+          # over the mockup point for point. Made if the machine has none.
+          name="iPhone 16"
+          udid=$(xcrun simctl list devices available | grep -E "^ +iPhone 16 \(" | head -n 1 | grep -oE "[0-9A-F]{8}-[0-9A-F-]{27}" || true)
+          if [ -z "$udid" ]; then
+            udid=$(xcrun simctl create "RSL iPhone 16" "iPhone 16" 2>/dev/null || true)
+          fi
+          if [ -z "$udid" ]; then
+            name="first iPhone"
+            udid=$(xcrun simctl list devices available | grep -E "^ +iPhone" | head -n 1 | grep -oE "[0-9A-F]{8}-[0-9A-F-]{27}")
+          fi
+          echo "Simulator: $name $udid"
+          echo "udid=$udid" >> "$GITHUB_OUTPUT"
+          xcrun simctl boot "$udid" || true
+          xcrun simctl bootstatus "$udid" -b
+          # No questions in the middle of a test: the camera is allowed, and the
+          # keyboard does not open with its page about swipe typing.
+          xcrun simctl privacy "$udid" grant camera io.github.dimakhk.rsl.native || true
+          xcrun simctl spawn "$udid" defaults write com.apple.keyboard.preferences DidShowContinuousPathIntroduction -bool true || true
+
+      - name: Tests in the Simulator
+        run: |
+          cd swift
+          set +e
+          xcodebuild test \
+            -project RSL.xcodeproj -scheme RSL \
+            -destination "id=${{ steps.sim.outputs.udid }}" \
+            -derivedDataPath build \
+            CODE_SIGNING_ALLOWED=NO > ../test.log 2>&1
+          status=$?
+          set -e
+          grep -E "RSLNOTE|Executed [0-9]+ tests" ../test.log | sed -E "s/^.*RSLNOTE /- /" | sort -u > ../notes.txt || true
+          { echo "### Тесты"; cat ../notes.txt; } >> "$GITHUB_STEP_SUMMARY"
+          while IFS= read -r line; do echo "::notice title=tests::$line"; done < ../notes.txt
+          if [ $status -ne 0 ]; then
+            grep -E "error:|XCTAssert|\*\* TEST FAILED|\*\* BUILD FAILED" ../test.log | sort -u | head -n 40 > ../errors.txt || true
+            cat ../errors.txt
+            head -n 10 ../errors.txt | while IFS= read -r line; do echo "::error title=xcodebuild::$line"; done
+            tail -n 40 ../test.log
+            exit 1
+          fi
+
+      # The same build, started on each screen in turn: for comparing with the mockup.
+      - name: Screenshots
+        if: always()
+        run: |
+          udid=${{ steps.sim.outputs.udid }}
+          id=io.github.dimakhk.rsl.native
+          app=$(find swift/build/Build/Products -maxdepth 2 -name "RSL.app" -path "*iphonesimulator*" | head -n 1)
+          [ -n "$app" ] || { echo "the app was not built"; exit 0; }
+          mkdir -p shots
+          xcrun simctl bootstatus "$udid" -b
+          xcrun simctl install "$udid" "$app"
+          xcrun simctl status_bar "$udid" override --time "9:41" --batteryState charged --batteryLevel 100 --cellularBars 4 || true
+          xcrun simctl privacy "$udid" grant camera "$id" || true
+          shot() {  # name, seconds to wait, launch arguments...
+            name=$1; wait=$2; shift 2
+            xcrun simctl terminate "$udid" "$id" >/dev/null 2>&1 || true
+            xcrun simctl launch "$udid" "$id" "$@"
+            sleep "$wait"
+            xcrun simctl io "$udid" screenshot "shots/$name.png"
+          }
+          shot splash-1000 3 -splashAt 1000
+          shot start 6
+          shot gesture-dark 5 -nosplash 1 -screen gesture -seed 1 -picture dark
+          shot gesture-light 5 -nosplash 1 -screen gesture -seed 1 -picture light
+          shot voice 7 -nosplash 1 -screen voice
+          shot keys 6 -nosplash 1 -screen keys -seed 1
+          shot history 5 -nosplash 1 -screen history
+          shot messages 7 -nosplash 1 -seed 1 -screen voice
+          ls -l shots
+
+      - uses: actions/upload-artifact@v5
+        if: always()
+        with:
+          name: screenshots
+          path: shots
+          if-no-files-found: ignore
+          retention-days: 14
+
+      - name: Build for the iPhone (no code signing)
+        run: |
+          cd swift
+          if ! xcodebuild build \
+              -project RSL.xcodeproj -scheme RSL \
+              -configuration Release -sdk iphoneos \
+              -destination "generic/platform=iOS" \
               -derivedDataPath build \
               CURRENT_PROJECT_VERSION=${{ github.run_number }} \
-              CODE_SIGNING_ALLOWED=NO \
-              CODE_SIGNING_REQUIRED=NO \
-              CODE_SIGN_IDENTITY="" \
-              build > xcodebuild.log 2>&1
+              CODE_SIGNING_ALLOWED=NO CODE_SIGNING_REQUIRED=NO CODE_SIGN_IDENTITY="" > ../build.log 2>&1
           then
-            tail -n 60 xcodebuild.log
-            # The first errors go to the run's summary page, where they can be
-            # read without opening the log.
-            grep -E "error:|\*\* BUILD FAILED" xcodebuild.log | sort -u | head -n 10 |
+            tail -n 60 ../build.log
+            grep -E "error:|\*\* BUILD FAILED" ../build.log | sort -u | head -n 10 |
               while IFS= read -r line; do echo "::error title=xcodebuild::$line"; done
             exit 1
           fi
-          tail -n 5 xcodebuild.log
+          tail -n 3 ../build.log
 
       # An .ipa is a zip with the app inside a folder called Payload.
       - name: Make the .ipa
         run: |
           mkdir -p out/Payload
-          cp -R build/Build/Products/Release-iphoneos/App.app out/Payload/
+          cp -R swift/build/Build/Products/Release-iphoneos/RSL.app out/Payload/
           cd out
           zip -qry RSL.ipa Payload
           ls -lh RSL.ipa
@@ -89,11 +165,13 @@ jobs:
           retention-days: 30
           compression-level: 0
 
-      - name: Keep the build log when the build fails
+      - name: Keep the logs when something fails
         if: failure()
         uses: actions/upload-artifact@v5
         with:
-          name: xcodebuild-log
-          path: xcodebuild.log
+          name: logs
+          path: |
+            test.log
+            build.log
           if-no-files-found: ignore
           retention-days: 7
