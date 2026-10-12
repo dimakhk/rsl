@@ -50,9 +50,7 @@ final class RSLUITests: XCTestCase {
     /* When a check fails: what is on screen, into the log (lines starting RSLDUMP). */
     private func found(_ element: XCUIElement, timeout: TimeInterval = 10) -> Bool {
         if element.waitForExistence(timeout: timeout) { return true }
-        for line in app.debugDescription.split(separator: "
-")
-        where line.contains("label:") || line.contains("identifier:") || line.contains("value:") {
+        for line in app.debugDescription.split(whereSeparator: \.isNewline) {
             print("RSLDUMP", line.trimmingCharacters(in: .whitespaces))
         }
         return false
