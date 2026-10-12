@@ -178,6 +178,7 @@ final class RSLUITests: XCTestCase {
         button("Клавиатура").tap()
         XCTAssertTrue(app.keyboards.firstMatch.waitForExistence(timeout: 15), "the keyboard did not come up")
         app.typeText("2468 1357")
+        print("RSLNOTE keyboard: the field holds «\(app.textViews["message-input"].value ?? "-")» after typing «2468 1357»")
         XCTAssertTrue(found(message("2468 1357")), "typed text is not in the chat")
         app.typeText("\n")
         app.typeText("90")

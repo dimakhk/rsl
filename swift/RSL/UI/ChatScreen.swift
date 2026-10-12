@@ -289,7 +289,12 @@ struct FeedView: View {
 // MARK: keyboard
 
 /* What the keyboard types into. It is not shown: the text appears in the
-   chat as it is typed (ChatModel.keyboardWrote). Return sends. */
+   chat as it is typed (ChatModel.keyboardWrote). Return sends.
+
+   The field belongs to the keyboard: the app reads it and never writes text
+   back into it. The one thing the app does is empty it, after a message is
+   sent. (Writing the app's own copy of the text back on every screen update
+   cost typed spaces.) */
 struct KeyboardInput: UIViewRepresentable {
     @ObservedObject var model: ChatModel
 
@@ -302,6 +307,7 @@ struct KeyboardInput: UIViewRepresentable {
         view.tintColor = .clear                          // no caret
         view.returnKeyType = .send
         view.autocapitalizationType = .sentences
+        view.smartInsertDeleteType = .no                 // spaces are the typist's business
         view.isScrollEnabled = false
         view.delegate = context.coordinator
         view.accessibilityLabel = "Сообщение"
@@ -310,7 +316,10 @@ struct KeyboardInput: UIViewRepresentable {
     }
 
     func updateUIView(_ view: UITextView, context: Context) {
-        if view.text != model.typed { view.text = model.typed }
+        if context.coordinator.cleared != model.fieldCleared {
+            context.coordinator.cleared = model.fieldCleared
+            if !view.text.isEmpty { view.text = "" }
+        }
         let wanted = model.mode == .keys
         if wanted && !view.isFirstResponder {
             DispatchQueue.main.async { if self.model.mode == .keys { view.becomeFirstResponder() } }
@@ -321,6 +330,7 @@ struct KeyboardInput: UIViewRepresentable {
 
     final class Coordinator: NSObject, UITextViewDelegate {
         let model: ChatModel
+        var cleared = 0
 
         init(_ model: ChatModel) { self.model = model }
 

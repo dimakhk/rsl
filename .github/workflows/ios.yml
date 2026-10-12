@@ -69,7 +69,11 @@ jobs:
           xcrun simctl privacy "$udid" grant microphone io.github.dimakhk.rsl.native || true
           xcrun simctl spawn "$udid" defaults write com.apple.keyboard.preferences DidShowContinuousPathIntroduction -bool true || true
 
+      # A failing test does not hold the .ipa back: the app is still built
+      # below, and the run is marked failed at the very end.
       - name: Tests in the Simulator
+        id: tests
+        continue-on-error: true
         run: |
           cd swift
           set +e
@@ -169,7 +173,7 @@ jobs:
           compression-level: 0
 
       - name: Keep the logs when something fails
-        if: failure()
+        if: failure() || steps.tests.outcome == 'failure'
         uses: actions/upload-artifact@v5
         with:
           name: logs
@@ -178,3 +182,9 @@ jobs:
             build.log
           if-no-files-found: ignore
           retention-days: 7
+
+      - name: The tests must have passed
+        if: steps.tests.outcome == 'failure'
+        run: |
+          echo "::error title=tests::Приложение собрано, но тесты не прошли: что именно - в сводке выше."
+          exit 1

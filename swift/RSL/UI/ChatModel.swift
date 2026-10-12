@@ -72,7 +72,7 @@ final class ChatModel: ObservableObject {
     @Published var debugShown = false
     @Published private(set) var plusTurns = 0
     @Published private(set) var closeTurns = 0
-    @Published private(set) var typed = ""       // what the keyboard has written and not yet sent
+    @Published private(set) var fieldCleared = 0     // goes up when the keyboard's field must be emptied
 
     let capture = Capture()
     let speaker = Speaker()
@@ -332,7 +332,6 @@ final class ChatModel: ObservableObject {
        chat. Return sends it; putting the keyboard away sends it too, so
        nothing typed is lost. A sent message is spoken. */
     func keyboardWrote(_ text: String) {
-        typed = text
         write(text, into: &draftID)
     }
 
@@ -340,7 +339,7 @@ final class ChatModel: ObservableObject {
         if let i = index(draftID) { speaker.say(messages[i].text) }
         setDots(draftID, false)
         draftID = nil
-        typed = ""
+        fieldCleared += 1
     }
 
     // MARK: voice
@@ -401,7 +400,7 @@ final class ChatModel: ObservableObject {
             openID = nil
             draftID = nil
             remarkID = nil
-            typed = ""
+            fieldCleared += 1
             messages = chats[current].lines.map { Message($0) }
         }
         historyOpen = false
