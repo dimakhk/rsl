@@ -297,7 +297,16 @@ final class Capture {
         }
     }
 
-    /* Recognition off, the picture stays (the gesture button pressed again). */
+    /* The front or the back camera. The recognisers start clean on the new picture. */
+    func useCamera(_ side: Camera.Side) {
+        camera.use(side)
+        frames.async {
+            self.framer.reset(now: Capture.now())
+            self.usingCloud = nil
+        }
+    }
+
+    /* Recognition off, the picture stays for a moment (the mode is being left). */
     func pause() {
         frames.async {
             self.wanted = false

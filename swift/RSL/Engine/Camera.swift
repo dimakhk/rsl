@@ -1,12 +1,12 @@
 import AVFoundation
 import Foundation
 
-/* The front camera: 1280x720 at 30 frames a second, upright, as BGRA.
+/* The camera, front or back: 1280x720 at 30 frames a second, upright, as BGRA.
 
-   The frames the models get are not mirrored - a sign made with the right
+   The frames the models get are never mirrored - a sign made with the right
    hand stays on the signer's right, as in the videos the models learnt from.
-   The picture on screen is mirrored, as a selfie camera shows it; that is
-   done by the preview layer.
+   The picture on screen is mirrored for the front camera only, as a selfie
+   camera shows it; that is done by the preview layer.
 
    Upright: the sensor sits differently in different devices (on newer iPads
    the front camera is on the long edge), so the angle is not assumed. The
@@ -19,15 +19,22 @@ final class Camera: NSObject, AVCaptureVideoDataOutputSampleBufferDelegate {
         case unavailable                         // no camera (the Simulator), or it would not start
     }
 
+    enum Side {
+        case front, back
+        var other: Side { self == .front ? .back : .front }
+    }
+
     let session = AVCaptureSession()
 
-    /* Called on the queue given to `configure`, for every frame. */
+    /* Called on the queue given to `start`, for every frame. */
     var onFrame: ((CVPixelBuffer) -> Void)?
     /* Called on the main queue when the system takes the camera away. */
     var onLost: (() -> Void)?
 
     private let sessionQueue = DispatchQueue(label: "rsl.camera")
+    private var side = Side.front                // touched on sessionQueue
     private var configured = false
+    private var input: AVCaptureDeviceInput?
     private var device: AVCaptureDevice?
     private var output: AVCaptureVideoDataOutput?
     private weak var previewLayer: AVCaptureVideoPreviewLayer?
@@ -54,6 +61,16 @@ final class Camera: NSObject, AVCaptureVideoDataOutputSampleBufferDelegate {
             }
         default:
             finish(.failure(.denied))
+        }
+    }
+
+    /* The other camera. If the camera is running it is swapped on the spot;
+       if not, the choice is kept for the next start. */
+    func use(_ wanted: Side) {
+        sessionQueue.async {
+            guard wanted != self.side else { return }
+            self.side = wanted
+            if self.configured { _ = self.install(wanted) }
         }
     }
 
@@ -103,44 +120,21 @@ final class Camera: NSObject, AVCaptureVideoDataOutputSampleBufferDelegate {
     }
 
     private func configure() -> Bool {
-        guard let device = AVCaptureDevice.default(.builtInWideAngleCamera, for: .video, position: .front),
-              let input = try? AVCaptureDeviceInput(device: device) else { return false }
         session.beginConfiguration()
-        defer { session.commitConfiguration() }
         session.sessionPreset = session.canSetSessionPreset(.hd1280x720) ? .hd1280x720 : .high
-        guard session.canAddInput(input) else { return false }
-        session.addInput(input)
-
-        let output = AVCaptureVideoDataOutput()
-        output.videoSettings = [kCVPixelBufferPixelFormatTypeKey as String: kCVPixelFormatType_32BGRA]
-        output.alwaysDiscardsLateVideoFrames = true              // behind: drop rather than pile up
-        output.setSampleBufferDelegate(self, queue: frameQueue)
-        guard session.canAddOutput(output) else { return false }
-        session.addOutput(output)
-
-        self.device = device
-        self.output = output
-        if let connection = output.connection(with: .video) {
-            // Portrait on a phone; corrected right away by watchRotation where it differs.
-            if connection.isVideoRotationAngleSupported(90) { connection.videoRotationAngle = 90 }
-            if connection.isVideoMirroringSupported {
-                connection.automaticallyAdjustsVideoMirroring = false
-                connection.isVideoMirrored = false
-            }
+        let made = AVCaptureVideoDataOutput()
+        made.videoSettings = [kCVPixelBufferPixelFormatTypeKey as String: kCVPixelFormatType_32BGRA]
+        made.alwaysDiscardsLateVideoFrames = true                // behind: drop rather than pile up
+        made.setSampleBufferDelegate(self, queue: frameQueue)
+        guard session.canAddOutput(made) else {
+            session.commitConfiguration()
+            return false
         }
+        session.addOutput(made)
+        output = made
+        session.commitConfiguration()
 
-        // Thirty frames a second: the models read 32 frames as about a second.
-        if (try? device.lockForConfiguration()) != nil {
-            let thirty = CMTime(value: 1, timescale: 30)
-            let supported = device.activeFormat.videoSupportedFrameRateRanges.contains { $0.minFrameRate <= 30 && $0.maxFrameRate >= 30 }
-            if supported {
-                device.activeVideoMinFrameDuration = thirty
-                device.activeVideoMaxFrameDuration = thirty
-            }
-            device.unlockForConfiguration()
-        }
-
-        watchRotation()
+        guard install(side) else { return false }
 
         // An interruption (the app goes to the background, a call comes in) ends
         // by itself and the session carries on; an error does not.
@@ -148,6 +142,48 @@ final class Camera: NSObject, AVCaptureVideoDataOutputSampleBufferDelegate {
             forName: AVCaptureSession.runtimeErrorNotification, object: session, queue: .main) { [weak self] _ in
                 self?.onLost?()
             })
+        return true
+    }
+
+    /* Puts this side's camera in place of the one in use. */
+    private func install(_ wanted: Side) -> Bool {
+        guard let next = AVCaptureDevice.default(.builtInWideAngleCamera, for: .video,
+                                                 position: wanted == .front ? .front : .back),
+              let nextInput = try? AVCaptureDeviceInput(device: next) else { return false }
+        session.beginConfiguration()
+        let old = input
+        if let old = old { session.removeInput(old) }
+        guard session.canAddInput(nextInput) else {
+            if let old = old, session.canAddInput(old) { session.addInput(old) }
+            session.commitConfiguration()
+            return false
+        }
+        session.addInput(nextInput)
+        input = nextInput
+        device = next
+
+        // The connection is made anew with every change of camera.
+        if let connection = output?.connection(with: .video) {
+            // Portrait on a phone; corrected right away by watchRotation where it differs.
+            if connection.isVideoRotationAngleSupported(90) { connection.videoRotationAngle = 90 }
+            if connection.isVideoMirroringSupported {
+                connection.automaticallyAdjustsVideoMirroring = false
+                connection.isVideoMirrored = false
+            }
+        }
+        session.commitConfiguration()
+
+        // Thirty frames a second: the models read 32 frames as about a second.
+        if (try? next.lockForConfiguration()) != nil {
+            let thirty = CMTime(value: 1, timescale: 30)
+            let supported = next.activeFormat.videoSupportedFrameRateRanges.contains { $0.minFrameRate <= 30 && $0.maxFrameRate >= 30 }
+            if supported {
+                next.activeVideoMinFrameDuration = thirty
+                next.activeVideoMaxFrameDuration = thirty
+            }
+            next.unlockForConfiguration()
+        }
+        watchRotation()
         return true
     }
 

@@ -335,6 +335,7 @@ struct DebugBox: View {
             Text(info.person ? "человек найден" : "кадр по экрану")
             if !info.hint.isEmpty { Text("подсказка: " + info.hint) }
             if !info.note.isEmpty { Text(info.note) }
+            Text(model.audioNote)
             if !keyboardNote.isEmpty { Text(keyboardNote) }
         }
         .font(.system(size: 10, design: .monospaced))
@@ -351,9 +352,13 @@ struct DebugBox: View {
 /* Launch arguments, for checking the screens against the mockup in the
    Simulator:  -nosplash 1   -screen gesture|voice|keys|history   -seed 1
                -splashAt 900 (the splash as it is that many ms in)   -debug 1
-               -picture light|dark (as if the camera showed such a picture) */
+               -picture light|dark (as if the camera showed such a picture)
+               -nostore 1 (chats are not read from or written to the device)
+               -noaudio 1 (the microphone is not used) */
 enum Launch {
     static var noSplash: Bool { UserDefaults.standard.bool(forKey: "nosplash") }
+    static var noStore: Bool { UserDefaults.standard.bool(forKey: "nostore") }
+    static var noAudio: Bool { UserDefaults.standard.bool(forKey: "noaudio") }
     static var debug: Bool { UserDefaults.standard.bool(forKey: "debug") }
     static var splashAt: Double? {
         UserDefaults.standard.object(forKey: "splashAt") == nil ? nil : UserDefaults.standard.double(forKey: "splashAt")
@@ -361,12 +366,7 @@ enum Launch {
 
     static func apply(to model: ChatModel) {
         let defaults = UserDefaults.standard
-        if defaults.bool(forKey: "seed") {
-            for word in ["Привет", "как", "дела"] { model.gestureWord(word) }
-            model.closePhrase()
-            model.keyboardWrote("Здравствуйте! Всё хорошо.")
-            model.sendTyped()
-        }
+        if defaults.bool(forKey: "seed") { model.seed() }
         switch defaults.string(forKey: "screen") {
         case "gesture": model.setMode(.gesture)
         case "voice": model.setMode(.voice)

@@ -38,6 +38,8 @@ targets:
         ITSAppUsesNonExemptEncryption: false
         LSRequiresIPhoneOS: true
         NSCameraUsageDescription: Камера нужна, чтобы видеть жесты и переводить их в текст.
+        NSMicrophoneUsageDescription: Микрофон нужен, чтобы записывать в чат то, что говорят вслух.
+        NSSpeechRecognitionUsageDescription: Распознавание речи превращает сказанное в текст в чате.
         UIAppFonts:
           - GolosText.ttf
         UILaunchScreen:

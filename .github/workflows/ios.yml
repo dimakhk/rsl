@@ -66,6 +66,7 @@ jobs:
           # No questions in the middle of a test: the camera is allowed, and the
           # keyboard does not open with its page about swipe typing.
           xcrun simctl privacy "$udid" grant camera io.github.dimakhk.rsl.native || true
+          xcrun simctl privacy "$udid" grant microphone io.github.dimakhk.rsl.native || true
           xcrun simctl spawn "$udid" defaults write com.apple.keyboard.preferences DidShowContinuousPathIntroduction -bool true || true
 
       - name: Tests in the Simulator
@@ -110,14 +111,16 @@ jobs:
             sleep "$wait"
             xcrun simctl io "$udid" screenshot "shots/$name.png"
           }
-          shot splash-1000 3 -splashAt 1000
-          shot start 6
-          shot gesture-dark 5 -nosplash 1 -screen gesture -seed 1 -picture dark
-          shot gesture-light 5 -nosplash 1 -screen gesture -seed 1 -picture light
-          shot voice 7 -nosplash 1 -screen voice
-          shot keys 6 -nosplash 1 -screen keys -seed 1
-          shot history 5 -nosplash 1 -screen history
-          shot messages 7 -nosplash 1 -seed 1 -screen voice
+          # Nothing is kept between these starts, and nothing is recorded or said.
+          quiet="-nostore 1 -noaudio 1"
+          shot splash-1000 3 $quiet -splashAt 1000
+          shot start 6 $quiet
+          shot gesture-dark 5 $quiet -nosplash 1 -screen gesture -seed 1 -picture dark
+          shot gesture-light 5 $quiet -nosplash 1 -screen gesture -seed 1 -picture light
+          shot voice 5 $quiet -nosplash 1 -screen voice -seed 1
+          shot keys 6 $quiet -nosplash 1 -screen keys -seed 1
+          shot history 5 $quiet -nosplash 1 -screen history -seed 1
+          shot messages 5 $quiet -nosplash 1 -seed 1
           ls -l shots
 
       - uses: actions/upload-artifact@v5

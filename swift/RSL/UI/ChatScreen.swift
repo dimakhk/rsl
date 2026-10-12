@@ -14,6 +14,7 @@ struct TopBar: View {
     @ObservedObject var model: ChatModel
     @Environment(\.metrics) private var m
     @Environment(\.accessibilityReduceMotion) private var reduce
+    @State private var soundPressed = false
 
     var body: some View {
         let u = m.u
@@ -43,15 +44,22 @@ struct TopBar: View {
                 .accessibilityAddTraits(.isHeader)
                 .offset(x: 80 * u)
 
-            Button(action: model.toggleSound) {
-                SoundIcon(v: model.sound ? 1 : 0, width: 28 * u)
-                    .animation(Motion.pick(Motion.soft, reduce: reduce), value: model.sound)
-                    .frame(width: 44 * u, height: 44 * u)
-                    .contentShape(Rectangle())
-            }
-            .buttonStyle(PressStyle())
-            .accessibilityLabel("Озвучка")
-            .accessibilityValue(model.sound ? "включена" : "выключена")
+            // A tap turns speaking on and off; a long press changes the voice.
+            SoundIcon(v: model.sound ? 1 : 0, width: 28 * u)
+                .animation(Motion.pick(Motion.soft, reduce: reduce), value: model.sound)
+                .frame(width: 44 * u, height: 44 * u)
+                .contentShape(Rectangle())
+                .scaleEffect(soundPressed ? 0.88 : 1)
+                .animation(Motion.press, value: soundPressed)
+                .onTapGesture { model.toggleSound() }
+                .onLongPressGesture(minimumDuration: 0.5, perform: { model.switchVoice() },
+                                    onPressingChanged: { soundPressed = $0 })
+                .accessibilityElement()
+                .accessibilityAddTraits(.isButton)
+                .accessibilityLabel("Озвучка")
+                .accessibilityValue((model.sound ? "включена" : "выключена") + ", голос " + model.voice.spokenName)
+                .accessibilityAction { model.toggleSound() }
+                .accessibilityAction(named: "Сменить голос") { model.switchVoice() }
             .place(x: m.width - 76 * u, y: -6 * u, width: 44 * u, height: 44 * u)
         }
         .foregroundStyle(color)
@@ -104,14 +112,32 @@ struct CameraBlock: View {
                 .shadow(color: Palette.wine.opacity(0.7), radius: 13 * u, y: 6 * u)
                 .opacity(model.glow ? (pulse ? 1 : 0.35) : 0)
 
-            ZStack {
+            ZStack(alignment: .bottomTrailing) {
                 Palette.wine
                 CameraPreview(camera: model.capture.camera)
                     .opacity(model.cameraReady ? 1 : 0)
                     .animation(.easeInOut(duration: 0.35), value: model.cameraReady)
+                    .allowsHitTesting(false)
                 if let light = model.pretendedPicture {      // Simulator screenshots only
                     Color(white: light ? 0.9 : 0.15)
                 }
+                // Front camera <-> back camera. The arrows turn half a circle
+                // on every change and come to rest looking the same.
+                Button(action: model.flipCamera) {
+                    IconView(icon: Icons.spin, width: 26 * u)
+                        .foregroundStyle(Palette.beige)
+                        .rotationEffect(.degrees(Double(model.cameraTurns) * 180))
+                        .animation(Motion.pick(.spring(response: 0.55, dampingFraction: 0.7), reduce: reduce),
+                                   value: model.cameraTurns)
+                        .frame(width: 44 * u, height: 44 * u)
+                        .background(Circle().fill(Palette.wine.opacity(0.78)))
+                        .contentShape(Circle())
+                }
+                .buttonStyle(PressStyle())
+                .accessibilityLabel("Сменить камеру")
+                .accessibilityValue(model.cameraSide == .front ? "передняя" : "задняя")
+                .padding(.trailing, 22 * u)
+                .padding(.bottom, 22 * u)
             }
             .clipShape(shape)
         }
@@ -132,8 +158,7 @@ struct CameraBlock: View {
             let h = now.top + 408 * now.u
             model.capture.setView(aspect: now.width / h, bar: (now.top + 50 * now.u) / h)
         }
-        .allowsHitTesting(false)
-        .accessibilityHidden(true)
+        .accessibilityHidden(!open)
     }
 }
 

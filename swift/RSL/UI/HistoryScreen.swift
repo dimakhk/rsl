@@ -2,10 +2,7 @@ import SwiftUI
 import UIKit
 
 /* The history screen: a drum of chats, like the time picker in iOS.
-
-   TODO: функция будет добавлена позже (история чатов).
-   The list is a placeholder: nothing is stored, renamed or deleted, and
-   choosing a chat only returns to the start screen. */
+   Oldest at the top, the open chat among them; a tap on a chat opens it. */
 
 /* A spring that can be stepped by hand - for the drum, whose position is
    dragged, thrown and then has to settle on a row. (Everything else in the
@@ -168,7 +165,8 @@ struct WheelView: View {
                     Text(row.name)
                         .font(Typeface.font(38 * u))
                         .lineLimit(1)
-                        .frame(width: m.width, height: 48 * u)
+                        .minimumScaleFactor(0.5)             // a long name is made smaller, not cut
+                        .frame(width: m.width - 40 * u, height: 48 * u)
                         .scaleEffect(row.scale)
                         .rotation3DEffect(.degrees(row.tilt), axis: (x: 1, y: 0, z: 0), perspective: 0.56)
                         .offset(y: row.y * u)
@@ -276,6 +274,7 @@ struct HistoryScreen: View {
             }
             .buttonStyle(PressStyle())
             .accessibilityLabel("Новый чат")
+            .accessibilityIdentifier("new-chat")
             .place(x: 32 * u, y: m.top + 6 * u, width: 44 * u, height: 44 * u)
 
             Text("История")
@@ -295,6 +294,7 @@ struct HistoryScreen: View {
             .place(x: m.width - 76 * u, y: m.top + 6 * u, width: 44 * u, height: 44 * u)
 
             WheelView(wheel: wheel, onChoose: model.openChat)
+                .accessibilityIdentifier("chats")
                 .place(x: 0, y: m.top + 70 * u, width: m.width,
                        height: max(0, m.height - m.top - m.bottom - 140 * u))
 
@@ -313,16 +313,16 @@ struct HistoryScreen: View {
         .frame(width: m.width, height: m.height)
         .onAppear {
             wheel.reduceMotion = reduce
-            wheel.build(model.chats, current: model.current)
+            wheel.build(model.chatTitles, current: model.current)
         }
         .onChange(of: model.historyOpen) { _, open in
             wheel.reduceMotion = reduce
-            if open { wheel.build(model.chats, current: model.current) }
+            if open { wheel.build(model.chatTitles, current: model.current) }
         }
     }
 
     private func add() {
-        guard let i = model.addChat(after: wheel.centre) else { return }
-        wheel.insert(model.chats[i], at: i) { model.chatAdded(i) }
+        guard let i = model.addChat() else { return }
+        wheel.insert(ChatTitle.new, at: i) { model.chatAdded(i) }
     }
 }

@@ -261,6 +261,58 @@ final class RuleTests: XCTestCase {
     }
 }
 
+final class ChatTests: XCTestCase {
+    /* A chat is named after its own words. */
+    func testTitleFromTheFirstRemark() {
+        XCTAssertEqual(ChatTitle.make(from: ["привет как дела"]), "Привет как дела")
+        XCTAssertEqual(ChatTitle.make(from: ["Где находится аптека? Подскажите, пожалуйста."]), "Где находится аптека")
+        XCTAssertNil(ChatTitle.make(from: []))
+        XCTAssertNil(ChatTitle.make(from: ["", " ... "]))
+    }
+
+    func testAGreetingAloneIsNotATopic() {
+        XCTAssertEqual(ChatTitle.make(from: ["Здравствуйте!", "Сколько стоит билет?"]), "Сколько стоит билет")
+        XCTAssertEqual(ChatTitle.make(from: ["Добрый день"]), "Добрый день")            // nothing else to go by
+    }
+
+    func testTitleIsShort() {
+        let long = ChatTitle.make(from: ["один два три четыре пять шесть"])
+        XCTAssertEqual(long, "Один два три четыре")
+        let word = try? XCTUnwrap(ChatTitle.make(from: ["достопримечательностями города"]))
+        XCTAssertEqual(word?.count, ChatTitle.maxLength)
+        XCTAssertEqual(word?.last, "…")
+    }
+
+    func testAChatSurvivesBeingWrittenAndRead() throws {
+        var chat = StoredChat()
+        chat.lines = [.init(right: true, text: "привет как дела"), .init(right: false, text: "Здравствуйте! Всё хорошо.")]
+        let encoder = JSONEncoder()
+        encoder.dateEncodingStrategy = .iso8601
+        let decoder = JSONDecoder()
+        decoder.dateDecodingStrategy = .iso8601
+        let back = try decoder.decode([StoredChat].self, from: encoder.encode([chat]))
+        XCTAssertEqual(back.first?.id, chat.id)
+        XCTAssertEqual(back.first?.lines, chat.lines)
+        XCTAssertEqual(back.first?.title, "Привет как дела")
+        // and it comes back as the same messages
+        let messages = chat.lines.map { Message($0) }
+        XCTAssertEqual(messages.map(\.text), ["привет как дела", "Здравствуйте! Всё хорошо."])
+        XCTAssertEqual(messages.map(\.side), [.right, .left])
+    }
+
+    func testBothVoicesAreAskedForByName() {
+        XCTAssertEqual(Speaker.Voice.milena.other, .yuri)
+        XCTAssertEqual(Speaker.Voice.yuri.other, .milena)
+        // The Simulator may have neither installed; a Russian voice of some kind is still expected.
+        if let voice = Speaker.systemVoice(.milena) {
+            XCTAssertTrue(voice.language.hasPrefix("ru"), voice.language)
+            print("RSLNOTE voice: asked for Milena, got \(voice.name) (\(voice.identifier))")
+        } else {
+            print("RSLNOTE voice: no Russian voice in this Simulator")
+        }
+    }
+}
+
 final class DrawingTests: XCTestCase {
     func testPathCommands() {
         let line = SVGPath.parse("M8 60L34 9L129 53").boundingRect
@@ -285,6 +337,7 @@ final class DrawingTests: XCTestCase {
         XCTAssertEqual(Icons.logoHouse.parts.count, 9)
         XCTAssertEqual(Icons.soundOn.parts.count, 3)
         XCTAssertEqual(Icons.micOff.parts.count, 6)
+        XCTAssertEqual(Icons.spin.parts.count, 4)
         XCTAssertEqual(Icons.logoAccess.box, CGRect(x: 0, y: 0, width: 105, height: 105))
         XCTAssertNil(Icons.logoAccess.parts[0].stroke)                  // a filled shape
         XCTAssertFalse(Icons.logoAccess.parts[0].path.isEmpty)

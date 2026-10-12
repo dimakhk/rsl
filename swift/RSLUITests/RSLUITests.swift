@@ -5,7 +5,11 @@ import XCTest
 
    The other tests call the app's code directly and would pass with a button
    that cannot be reached at all - which is exactly what happened once: the
-   history button lay under the invisible tap area of the chat's title. */
+   history button lay under the invisible tap area of the chat's title.
+
+   The app is started with nothing kept from earlier runs and without the
+   microphone: the Simulator has none, and a test must not depend on the one
+   before it. */
 
 final class RSLUITests: XCTestCase {
     private var app: XCUIApplication!
@@ -13,7 +17,7 @@ final class RSLUITests: XCTestCase {
     override func setUp() {
         continueAfterFailure = false
         app = XCUIApplication()
-        app.launchArguments = ["-nosplash", "1"]
+        app.launchArguments = ["-nosplash", "1", "-nostore", "1", "-noaudio", "1"]
         // If the system still asks about the camera, say yes.
         addUIInterruptionMonitor(withDescription: "camera") { alert in
             for label in ["Allow", "OK", "Разрешить"] where alert.buttons[label].exists {
@@ -36,8 +40,19 @@ final class RSLUITests: XCTestCase {
         return XCTWaiter().wait(for: [met], timeout: timeout) == .completed
     }
 
+    /* A message in the chat (a bubble), by its text. */
     private func message(_ text: String) -> XCUIElement {
-        app.descendants(matching: .any).matching(NSPredicate(format: "label == %@", text)).firstMatch
+        app.otherElements.matching(NSPredicate(format: "label == %@", text)).firstMatch
+    }
+
+    /* Types a message and puts the keyboard away. Digits: nothing for autocorrection to "fix". */
+    private func write(_ text: String) {
+        button("Клавиатура").tap()
+        XCTAssertTrue(app.keyboards.firstMatch.waitForExistence(timeout: 15), "the keyboard did not come up")
+        app.typeText(text)
+        app.typeText("\n")
+        app.coordinate(withNormalizedOffset: CGVector(dx: 0.5, dy: 0.2)).tap()
+        XCTAssertTrue(wait(app.keyboards.firstMatch, "exists == false"), "a tap beside the keyboard did not put it away")
     }
 
     /* "On screen and can be pressed" is asked, not "exists": the history
@@ -54,25 +69,57 @@ final class RSLUITests: XCTestCase {
         XCTAssertTrue(wait(history, "hittable == true"), "the chat did not come back")
     }
 
-    /* «+» adds a chat and opens it. */
-    func testNewChat() {
+    /* A chat takes its name from what was said in it; «+» starts a new one;
+       the old one waits in the history and opens again with its messages. */
+    func testChatsAreNamedKeptAndReopened() {
+        XCTAssertTrue(app.staticTexts["Новый чат"].waitForExistence(timeout: 30))
+        write("2468 1357")
+        XCTAssertTrue(message("2468 1357").waitForExistence(timeout: 10))
+        let named = app.staticTexts["2468 1357"]
+        XCTAssertTrue(named.waitForExistence(timeout: 10), "the chat was not named after its first message")
+
         button("История чатов").tap()
-        let plus = app.buttons["Новый чат"]
+        let plus = app.buttons["new-chat"]
         XCTAssertTrue(wait(plus, "hittable == true"))
         plus.tap()
-        let title = app.staticTexts["Чат #5"]
-        XCTAssertTrue(title.waitForExistence(timeout: 10), "no new chat after «+»")
-        XCTAssertTrue(wait(title, "hittable == true"), "the new chat did not open")
+        XCTAssertTrue(wait(plus, "hittable == false"), "the new chat did not open")
+        XCTAssertTrue(wait(message("2468 1357"), "exists == false"), "the new chat is not empty")
+        XCTAssertTrue(wait(app.staticTexts["Новый чат"], "hittable == true"))
+
+        // back to the first chat: it is one row above the open one, so the
+        // first tap brings it to the centre and the second opens it
+        button("История чатов").tap()
+        let row = app.buttons["2468 1357"]
+        XCTAssertTrue(wait(row, "hittable == true"), "the earlier chat is not in the history")
+        row.tap()
+        XCTAssertTrue(wait(row, "selected == true"), "the wheel did not turn to the chat that was tapped")
+        row.tap()
+        XCTAssertTrue(message("2468 1357").waitForExistence(timeout: 10), "the earlier chat did not open with its messages")
         XCTAssertTrue(wait(plus, "hittable == false"))
+    }
+
+    /* «+» while the open chat is still empty has nothing to add: it just goes back to it. */
+    func testPlusOnAnEmptyChatAddsNothing() {
+        button("История чатов").tap()
+        let plus = app.buttons["new-chat"]
+        XCTAssertTrue(wait(plus, "hittable == true"))
+        plus.tap()
+        XCTAssertTrue(wait(plus, "hittable == false"))
+        XCTAssertTrue(wait(app.staticTexts["Новый чат"], "hittable == true"))
     }
 
     func testSoundSwitches() {
         let sound = button("Озвучка")
-        XCTAssertEqual(sound.value as? String, "включена")
+        XCTAssertTrue(wait(sound, "value BEGINSWITH 'включена'"))
         sound.tap()
-        XCTAssertTrue(wait(sound, "value == 'выключена'"))
+        XCTAssertTrue(wait(sound, "value BEGINSWITH 'выключена'"), "a tap did not turn the sound off")
         sound.tap()
-        XCTAssertTrue(wait(sound, "value == 'включена'"))
+        XCTAssertTrue(wait(sound, "value BEGINSWITH 'включена'"))
+        // a long press changes the voice
+        XCTAssertTrue(wait(sound, "value ENDSWITH 'Милена'"))
+        sound.press(forDuration: 1.2)
+        XCTAssertTrue(wait(sound, "value ENDSWITH 'Юрий'"), "a long press did not change the voice")
+        XCTAssertTrue(wait(sound, "value BEGINSWITH 'включена'"), "a long press also switched the sound")
     }
 
     /* A pill opens its mode; pressed again, it closes the mode. */
@@ -96,8 +143,21 @@ final class RSLUITests: XCTestCase {
         XCTAssertTrue(wait(voice, "selected == false"))
     }
 
-    /* What is typed shows in the chat; a tap beside the keyboard puts it away
-       and the message stays. Digits: nothing for autocorrection to "fix". */
+    /* In the gesture mode: the button that changes the camera. */
+    func testCameraSwitch() {
+        let flip = app.buttons["Сменить камеру"]
+        XCTAssertFalse(flip.isHittable, "the camera button is on screen outside the gesture mode")
+        button("Жесты").tap()
+        XCTAssertTrue(wait(flip, "hittable == true"), "no camera button in the gesture mode")
+        XCTAssertEqual(flip.value as? String, "передняя")
+        flip.tap()
+        XCTAssertTrue(wait(flip, "value == 'задняя'"), "the camera did not change")
+        flip.tap()
+        XCTAssertTrue(wait(flip, "value == 'передняя'"))
+    }
+
+    /* What is typed shows in the chat while it is typed; a tap beside the
+       keyboard puts it away and nothing typed is lost. */
     func testKeyboardWritesIntoTheChat() {
         button("Клавиатура").tap()
         XCTAssertTrue(app.keyboards.firstMatch.waitForExistence(timeout: 15), "the keyboard did not come up")
@@ -109,8 +169,7 @@ final class RSLUITests: XCTestCase {
 
         app.coordinate(withNormalizedOffset: CGVector(dx: 0.5, dy: 0.2)).tap()
         XCTAssertTrue(wait(app.keyboards.firstMatch, "exists == false"), "a tap beside the keyboard did not put it away")
-        let keys = button("Клавиатура")
-        XCTAssertFalse(keys.isSelected)
+        XCTAssertFalse(button("Клавиатура").isSelected)
         XCTAssertTrue(message("2468 1357").exists)
         XCTAssertTrue(message("90").exists, "what was typed and not sent was lost with the keyboard")
     }
