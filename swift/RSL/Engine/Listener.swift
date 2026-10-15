@@ -25,7 +25,6 @@ final class Listener {
     var onText: ((String) -> Void)?              // the remark so far; replaces what was sent before
     var onRemark: ((String) -> Void)?            // the remark is complete
     var onStopped: ((Failure?) -> Void)?         // listening ended by itself
-    var onLevel: ((CGFloat) -> Void)?            // how loud it is, 0...1, about forty times a second
 
     private(set) var note = ""                   // for the debug view
 
@@ -66,19 +65,6 @@ final class Listener {
         try? AVAudioSession.sharedInstance().setCategory(.playback, mode: .spokenAudio, options: [.duckOthers])
     }
 
-    /* Loudness of a piece of sound, 0...1: its RMS level in decibels, from
-       -50 dB (a quiet room) to -10 dB (a voice close by). */
-    static func loudness(_ buffer: AVAudioPCMBuffer) -> CGFloat {
-        guard let samples = buffer.floatChannelData?[0], buffer.frameLength > 0 else { return 0 }
-        let n = Int(buffer.frameLength)
-        var sum: Float = 0
-        for i in 0..<n { sum += samples[i] * samples[i] }
-        let rms = (sum / Float(n)).squareRoot()
-        guard rms > 0 else { return 0 }
-        let db = 20 * log10(rms)
-        return CGFloat(min(1, max(0, (db + 50) / 40)))
-    }
-
     private static func authorize(_ done: @escaping (Bool) -> Void) {
         SFSpeechRecognizer.requestAuthorization { status in
             guard status == .authorized else { return DispatchQueue.main.async { done(false) } }
@@ -110,8 +96,6 @@ final class Listener {
         if !tapped {
             input.installTap(onBus: 0, bufferSize: 1024, format: format) { [weak self] buffer, _ in
                 self?.request?.append(buffer)
-                let level = Listener.loudness(buffer)
-                DispatchQueue.main.async { self?.onLevel?(level) }
             }
             tapped = true
         }

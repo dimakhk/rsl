@@ -77,7 +77,6 @@ final class ChatModel: ObservableObject {
     let capture = Capture()
     let speaker = Speaker()
     let listener = Listener()
-    let meter = MicMeter()                       // how loud the microphone is, for the wave
     var reduceMotion = false
 
     private let store: ChatStore
@@ -136,7 +135,6 @@ final class ChatModel: ObservableObject {
         capture.onCamera = { [weak self] on in self?.cameraReady = on }
         capture.onPicture = { [weak self] light in self?.pictureIsLight = light }
 
-        listener.onLevel = { [weak self] level in self?.meter.update(level) }
         listener.onText = { [weak self] text in self?.heard(text, complete: false) }
         listener.onRemark = { [weak self] text in self?.heard(text, complete: true) }
         listener.onStopped = { [weak self] _ in
@@ -357,7 +355,6 @@ final class ChatModel: ObservableObject {
 
     private func stopListening() {
         listener.stop()
-        meter.reset()
         setDots(remarkID, false)
         remarkID = nil
     }
