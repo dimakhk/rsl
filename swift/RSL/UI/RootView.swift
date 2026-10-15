@@ -249,7 +249,7 @@ struct PhoneView: View {
 
             CameraBlock(model: model)
 
-            WaveView()
+            WaveView(meter: model.meter, live: model.mode == .voice)
                 .offset(y: m.height - waveHeight + (model.mode == .voice || reduce ? 0 : 1.12 * waveHeight))
                 .opacity(reduce && model.mode != .voice ? 0 : 1)
                 .animation(Motion.pick(Motion.screen, reduce: reduce), value: model.mode)
@@ -354,7 +354,8 @@ struct DebugBox: View {
                -splashAt 900 (the splash as it is that many ms in)   -debug 1
                -picture light|dark (as if the camera showed such a picture)
                -nostore 1 (chats are not read from or written to the device)
-               -noaudio 1 (the microphone is not used) */
+               -noaudio 1 (the microphone is not used)
+               -micLevel 0.7 (as if the microphone heard a voice that loud) */
 enum Launch {
     static var noSplash: Bool { UserDefaults.standard.bool(forKey: "nosplash") }
     static var noStore: Bool { UserDefaults.standard.bool(forKey: "nostore") }
@@ -373,6 +374,9 @@ enum Launch {
         case "keys": model.setMode(.keys)
         case "history": model.openHistory()
         default: break
+        }
+        if defaults.object(forKey: "micLevel") != nil {
+            model.meter.pretend(CGFloat(defaults.double(forKey: "micLevel")))
         }
         if let picture = defaults.string(forKey: "picture") {
             model.pretendPicture(light: picture == "light")

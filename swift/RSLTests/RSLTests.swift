@@ -1,3 +1,4 @@
+import AVFoundation
 import CoreVideo
 import SwiftUI
 import XCTest
@@ -310,6 +311,36 @@ final class ChatTests: XCTestCase {
         } else {
             print("RSLNOTE voice: no Russian voice in this Simulator")
         }
+    }
+}
+
+final class WaveTests: XCTestCase {
+    /* The wave rises with the voice: loud sound reads high, silence reads nothing. */
+    func testLoudnessOfSound() throws {
+        let format = try XCTUnwrap(AVAudioFormat(standardFormatWithSampleRate: 44_100, channels: 1))
+        func tone(_ amplitude: Float) throws -> AVAudioPCMBuffer {
+            let buffer = try XCTUnwrap(AVAudioPCMBuffer(pcmFormat: format, frameCapacity: 1024))
+            buffer.frameLength = 1024
+            for i in 0..<1024 { buffer.floatChannelData![0][i] = amplitude * sin(Float(i) * 0.1) }
+            return buffer
+        }
+        XCTAssertEqual(Listener.loudness(try tone(0)), 0)
+        XCTAssertEqual(Listener.loudness(try tone(0.001)), 0)            // -63 dB: a quiet room
+        XCTAssertGreaterThan(Listener.loudness(try tone(0.3)), 0.8)     // -13 dB: speaking close by
+        let middle = Listener.loudness(try tone(0.02))                    // -37 dB
+        XCTAssertGreaterThan(middle, 0.2)
+        XCTAssertLessThan(middle, 0.5)
+    }
+
+    func testMeterRisesFastAndFallsSlowly() {
+        let meter = MicMeter()
+        meter.update(1)
+        let up = meter.level
+        XCTAssertGreaterThan(up, 0.4)
+        meter.update(0)
+        XCTAssertGreaterThan(meter.level, up * 0.8)                       // one quiet reading does not drop it
+        meter.reset()
+        XCTAssertEqual(meter.level, 0)
     }
 }
 

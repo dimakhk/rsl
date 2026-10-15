@@ -122,6 +122,7 @@ jobs:
           shot gesture-dark 5 $quiet -nosplash 1 -screen gesture -seed 1 -picture dark
           shot gesture-light 5 $quiet -nosplash 1 -screen gesture -seed 1 -picture light
           shot voice 5 $quiet -nosplash 1 -screen voice -seed 1
+          shot voice-loud 5 $quiet -nosplash 1 -screen voice -seed 1 -micLevel 0.8
           shot keys 6 $quiet -nosplash 1 -screen keys -seed 1
           shot history 5 $quiet -nosplash 1 -screen history -seed 1
           shot messages 5 $quiet -nosplash 1 -seed 1

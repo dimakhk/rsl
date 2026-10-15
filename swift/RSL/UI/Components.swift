@@ -110,15 +110,20 @@ struct PillView<IconContent: View>: View {
     }
 }
 
-/* The wavy edge: seven waves over two screen widths (3.5 a screen), as drawn. */
+/* The wavy edge: 3.5 waves across the screen, as drawn. `phase` slides it
+   sideways (1 = one whole wave, which brings it back onto itself). */
 struct WaveCrest: Shape {
+    var phase: CGFloat
+
     func path(in rect: CGRect) -> Path {
         var p = Path()
         p.move(to: CGPoint(x: rect.minX, y: rect.maxY))
+        let waves: CGFloat = 3.5
         var x: CGFloat = 0
-        while x <= 786 {
-            let y = 12 - 11 * sin((x / (786 / 7)) * 2 * .pi + 0.6)
-            p.addLine(to: CGPoint(x: rect.minX + x / 786 * rect.width, y: rect.minY + y / 24 * rect.height))
+        while x <= rect.width + 3 {
+            let angle = (x / rect.width * waves + phase) * 2 * .pi + 0.6
+            let y = 12 - 11 * sin(angle)
+            p.addLine(to: CGPoint(x: rect.minX + min(x, rect.width), y: rect.minY + y / 24 * rect.height))
             x += 3
         }
         p.addLine(to: CGPoint(x: rect.maxX, y: rect.maxY))
@@ -127,31 +132,60 @@ struct WaveCrest: Shape {
     }
 }
 
-/* The burgundy panel of the voice screen. Its edge flows sideways - sliding
-   by exactly one wave brings it back onto itself - and breathes a little. */
+/* How loud the microphone is, 0...1, for the wave. Not published: the wave
+   redraws itself every frame while it is on screen and reads it then, so
+   forty readings a second do not redraw the rest of the screen. */
+final class MicMeter {
+    private(set) var level: CGFloat = 0
+    private var fixed: CGFloat? = nil
+
+    /* A new reading. It rises quickly and falls slowly, as a meter needle does. */
+    func update(_ raw: CGFloat) {
+        guard fixed == nil else { return }
+        let k: CGFloat = raw > level ? 0.45 : 0.12
+        level += (raw - level) * k
+    }
+
+    func reset() {
+        if fixed == nil { level = 0 }
+    }
+
+    /* For screenshots in the Simulator, which has no microphone. */
+    func pretend(_ value: CGFloat) {
+        fixed = value
+        level = value
+    }
+}
+
+/* The burgundy panel of the voice screen. Its edge flows sideways and
+   breathes; while the microphone hears a voice, the waves rise with it.
+   Drawn frame by frame from the clock, so it moves for sure whenever the
+   panel is up, and stands still (no work at all) when it is away. */
 struct WaveView: View {
+    let meter: MicMeter
+    let live: Bool                               // the voice screen is open
     @Environment(\.metrics) private var m
     @Environment(\.accessibilityReduceMotion) private var reduce
-    @State private var flow = false
-    @State private var breathe = false
 
     var body: some View {
         let u = m.u
-        ZStack(alignment: .topLeading) {
-            Rectangle().fill(Palette.wine)
-                .padding(.top, 23 * u)
-            WaveCrest().fill(Palette.wine)
-                .frame(width: m.width * 2, height: 24 * u)
-                .offset(x: flow ? -m.width * 2 / 7 : 0)
-                .frame(width: m.width, height: 24 * u, alignment: .leading)
-                .scaleEffect(x: 1, y: reduce ? 1 : (breathe ? 1.06 : 0.82), anchor: .bottom)
+        TimelineView(.animation(paused: !live || reduce)) { context in
+            let t = context.date.timeIntervalSinceReferenceDate
+            let calm = reduce || !live
+            // one wave sideways in 5 s; a breath every 6.8 s between 0.82 and 1.06
+            let phase = calm ? 0 : CGFloat(t / 5).truncatingRemainder(dividingBy: 1)
+            let breath = calm ? 1 : 0.94 + 0.12 * CGFloat(sin(t * .pi / 3.4))
+            let voice = calm ? 0 : meter.level
+            ZStack(alignment: .topLeading) {
+                Rectangle().fill(Palette.wine)
+                    .padding(.top, 23 * u)
+                WaveCrest(phase: -phase)
+                    .fill(Palette.wine)
+                    .frame(width: m.width, height: 24 * u)
+                    .scaleEffect(x: 1, y: breath + 1.1 * voice, anchor: .bottom)
+            }
         }
         .frame(width: m.width, height: m.bottom + 121 * u)
-        .onAppear {
-            guard !reduce else { return }
-            withAnimation(.linear(duration: 5).repeatForever(autoreverses: false)) { flow = true }
-            withAnimation(.easeInOut(duration: 3.4).repeatForever(autoreverses: true)) { breathe = true }
-        }
         .allowsHitTesting(false)
     }
 }
