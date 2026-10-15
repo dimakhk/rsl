@@ -249,7 +249,7 @@ struct PhoneView: View {
 
             CameraBlock(model: model)
 
-            WaveView()
+            WaveView(live: model.mode == .voice)
                 .offset(y: m.height - waveHeight + (model.mode == .voice || reduce ? 0 : 1.12 * waveHeight))
                 .opacity(reduce && model.mode != .voice ? 0 : 1)
                 .animation(Motion.pick(Motion.screen, reduce: reduce), value: model.mode)

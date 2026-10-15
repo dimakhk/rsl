@@ -110,15 +110,20 @@ struct PillView<IconContent: View>: View {
     }
 }
 
-/* The wavy edge: seven waves over two screen widths (3.5 a screen), as drawn. */
+/* The wavy edge: 3.5 waves across the screen, as drawn. `phase` slides it
+   sideways (1 = one whole wave, which brings it back onto itself). */
 struct WaveCrest: Shape {
+    var phase: CGFloat
+
     func path(in rect: CGRect) -> Path {
         var p = Path()
         p.move(to: CGPoint(x: rect.minX, y: rect.maxY))
+        let waves: CGFloat = 3.5
         var x: CGFloat = 0
-        while x <= 786 {
-            let y = 12 - 11 * sin((x / (786 / 7)) * 2 * .pi + 0.6)
-            p.addLine(to: CGPoint(x: rect.minX + x / 786 * rect.width, y: rect.minY + y / 24 * rect.height))
+        while x <= rect.width + 3 {
+            let angle = (x / rect.width * waves + phase) * 2 * .pi + 0.6
+            let y = 12 - 11 * sin(angle)
+            p.addLine(to: CGPoint(x: rect.minX + min(x, rect.width), y: rect.minY + y / 24 * rect.height))
             x += 3
         }
         p.addLine(to: CGPoint(x: rect.maxX, y: rect.maxY))
@@ -127,31 +132,31 @@ struct WaveCrest: Shape {
     }
 }
 
-/* The burgundy panel of the voice screen. Its edge flows sideways - sliding
-   by exactly one wave brings it back onto itself - and breathes a little. */
+/* The burgundy panel of the voice screen. Its edge floats sideways at an
+   even pace - one wave in 5 seconds - and keeps its height.
+
+   Drawn frame by frame from the clock: a looping animation started once
+   did not run on the phone. The panel stands still (and costs nothing)
+   when it is away, and with "Reduce Motion" on. */
 struct WaveView: View {
+    let live: Bool                               // the voice screen is open
     @Environment(\.metrics) private var m
     @Environment(\.accessibilityReduceMotion) private var reduce
-    @State private var flow = false
-    @State private var breathe = false
 
     var body: some View {
         let u = m.u
-        ZStack(alignment: .topLeading) {
-            Rectangle().fill(Palette.wine)
-                .padding(.top, 23 * u)
-            WaveCrest().fill(Palette.wine)
-                .frame(width: m.width * 2, height: 24 * u)
-                .offset(x: flow ? -m.width * 2 / 7 : 0)
-                .frame(width: m.width, height: 24 * u, alignment: .leading)
-                .scaleEffect(x: 1, y: reduce ? 1 : (breathe ? 1.06 : 0.82), anchor: .bottom)
+        TimelineView(.animation(paused: !live || reduce)) { context in
+            let t = context.date.timeIntervalSinceReferenceDate
+            let phase = !live || reduce ? 0 : CGFloat(t / 5).truncatingRemainder(dividingBy: 1)
+            ZStack(alignment: .topLeading) {
+                Rectangle().fill(Palette.wine)
+                    .padding(.top, 23 * u)
+                WaveCrest(phase: -phase)
+                    .fill(Palette.wine)
+                    .frame(width: m.width, height: 24 * u)
+            }
         }
         .frame(width: m.width, height: m.bottom + 121 * u)
-        .onAppear {
-            guard !reduce else { return }
-            withAnimation(.linear(duration: 5).repeatForever(autoreverses: false)) { flow = true }
-            withAnimation(.easeInOut(duration: 3.4).repeatForever(autoreverses: true)) { breathe = true }
-        }
         .allowsHitTesting(false)
     }
 }
