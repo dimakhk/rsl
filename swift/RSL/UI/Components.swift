@@ -1,0 +1,234 @@
+import SwiftUI
+
+/* Small pieces the screens are built from: the icons that redraw themselves,
+   the pills, the wave, the typing dots, words that wrap. */
+
+/* The sound icon. On: the arcs fan out of the speaker one after another.
+   Off: they fold back and the slash is drawn. Both end as the original files.
+   `v` runs from 0 (off) to 1 (on) on a spring. */
+struct SoundIcon: View, Animatable {
+    var v: CGFloat
+    let width: CGFloat
+
+    var animatableData: CGFloat {
+        get { v }
+        set { v = newValue }
+    }
+
+    var body: some View {
+        ZStack {
+            IconView(icon: Icons.soundOn, width: width,
+                     drawn: [1: clamp01((v - 0.4) / 0.3), 2: clamp01((v - 0.62) / 0.38)])
+                .opacity(clamp01((v - 0.3) / 0.25))
+            IconView(icon: Icons.soundOff, width: width, drawn: [2: 1 - clamp01(v / 0.45)])
+                .opacity(clamp01((0.55 - v) / 0.25))
+        }
+    }
+}
+
+/* The microphone: the slash is drawn across it or pulled back. */
+struct MicIcon: View, Animatable {
+    var v: CGFloat                               // 0 off (crossed out) ... 1 on
+    let width: CGFloat
+
+    var animatableData: CGFloat {
+        get { v }
+        set { v = newValue }
+    }
+
+    var body: some View {
+        ZStack {
+            IconView(icon: Icons.mic, width: width)
+                .opacity(clamp01((v - 0.45) / 0.3))
+            IconView(icon: Icons.micOff, width: width, drawn: [4: 1 - clamp01(v / 0.6)])
+                .opacity(clamp01((0.75 - v) / 0.3))
+        }
+    }
+}
+
+/* A pill has two faces - burgundy on beige, beige on burgundy (over the wave)
+   - and two states. Everything is there at once; `active` and `onWave` only
+   set opacities and one scale, each on its own spring. */
+struct PillView<IconContent: View>: View {
+    let active: Bool
+    let onWave: Bool
+    let breathing: Bool
+    @ViewBuilder var icon: IconContent
+
+    @Environment(\.metrics) private var m
+    @Environment(\.accessibilityReduceMotion) private var reduce
+    @State private var breath = false
+
+    var body: some View {
+        let u = m.u
+        let a: CGFloat = active ? 1 : 0
+        let w: CGFloat = onWave ? 1 : 0
+        let light = a + w - 2 * a * w            // beige icon: on a burgundy fill, or on the wave while not filled
+        let size = CGSize(width: 88 * u, height: 60 * u)
+        ZStack {
+            Capsule().strokeBorder(Palette.wine, lineWidth: 5 * u)
+                .frame(width: size.width, height: size.height)
+                .opacity(1 - w)
+            Capsule().strokeBorder(Palette.beige, lineWidth: 5 * u)
+                .frame(width: size.width, height: size.height)
+                .opacity(w * (1 - a))
+            icon.foregroundStyle(Palette.wine).opacity(1 - light)
+            icon.foregroundStyle(Palette.beige).opacity(light)
+        }
+        .frame(width: size.width, height: size.height)
+        .background {
+            // The fill spreads from the centre: a disc that outgrows the pill.
+            // (Never scaled to exactly nothing: a zero scale cannot be drawn.)
+            Circle().fill(Palette.wine)
+                .frame(width: 112 * u, height: 112 * u)
+                .scaleEffect(max(a, 0.001))
+                .opacity(a == 0 ? 0 : 1 - w)
+        }
+        .background {
+            // Over the wave the active pill is drawn as in the mockup: its
+            // 5-wide ring stays burgundy - so it melts into the wave - and
+            // the beige fill sits inside it.
+            Circle().fill(Palette.beige)
+                .frame(width: 112 * u, height: 112 * u)
+                .scaleEffect(max(a, 0.001))
+                .opacity(a == 0 ? 0 : w)
+                .frame(width: 78 * u, height: 50 * u)
+                .clipShape(RoundedRectangle(cornerRadius: 25 * u))
+        }
+        .clipShape(Capsule())
+        .contentShape(Capsule())
+        .animation(Motion.pick(.spring(response: 0.38, dampingFraction: 0.8), reduce: reduce), value: active)
+        .animation(Motion.pick(Motion.screen, reduce: reduce), value: onWave)
+        .scaleEffect(breath ? 1.03 : 1)
+        .onChange(of: breathing) { _, on in
+            if on && !reduce {
+                withAnimation(.easeInOut(duration: 2).repeatForever(autoreverses: true)) { breath = true }
+            } else {
+                withAnimation(.easeInOut(duration: 0.3)) { breath = false }
+            }
+        }
+    }
+}
+
+/* The wavy edge: 3.5 waves across the screen, as drawn. `phase` slides it
+   sideways (1 = one whole wave, which brings it back onto itself). */
+struct WaveCrest: Shape {
+    var phase: CGFloat
+
+    func path(in rect: CGRect) -> Path {
+        var p = Path()
+        p.move(to: CGPoint(x: rect.minX, y: rect.maxY))
+        let waves: CGFloat = 3.5
+        var x: CGFloat = 0
+        while x <= rect.width + 3 {
+            let angle = (x / rect.width * waves + phase) * 2 * .pi + 0.6
+            let y = 12 - 11 * sin(angle)
+            p.addLine(to: CGPoint(x: rect.minX + min(x, rect.width), y: rect.minY + y / 24 * rect.height))
+            x += 3
+        }
+        p.addLine(to: CGPoint(x: rect.maxX, y: rect.maxY))
+        p.closeSubpath()
+        return p
+    }
+}
+
+/* The burgundy panel of the voice screen. Its edge floats sideways at an
+   even pace - one wave in 5 seconds - and keeps its height.
+
+   Drawn frame by frame from the clock: a looping animation started once
+   did not run on the phone. The panel stands still (and costs nothing)
+   when it is away, and with "Reduce Motion" on. */
+struct WaveView: View {
+    let live: Bool                               // the voice screen is open
+    @Environment(\.metrics) private var m
+    @Environment(\.accessibilityReduceMotion) private var reduce
+
+    var body: some View {
+        let u = m.u
+        TimelineView(.animation(paused: !live || reduce)) { context in
+            let t = context.date.timeIntervalSinceReferenceDate
+            let phase = !live || reduce ? 0 : CGFloat(t / 5).truncatingRemainder(dividingBy: 1)
+            ZStack(alignment: .topLeading) {
+                Rectangle().fill(Palette.wine)
+                    .padding(.top, 23 * u)
+                WaveCrest(phase: -phase)
+                    .fill(Palette.wine)
+                    .frame(width: m.width, height: 24 * u)
+            }
+        }
+        .frame(width: m.width, height: m.bottom + 121 * u)
+        .allowsHitTesting(false)
+    }
+}
+
+/* Three dots, as in a messenger: more is coming. */
+struct DotsView: View {
+    @Environment(\.metrics) private var m
+    @Environment(\.accessibilityReduceMotion) private var reduce
+
+    var body: some View {
+        let u = m.u
+        TimelineView(.animation(paused: reduce)) { context in
+            let t = context.date.timeIntervalSinceReferenceDate
+            HStack(spacing: 3.5 * u) {
+                ForEach(0..<3, id: \.self) { i in
+                    let v = reduce ? 0.6 : DotsView.blink(t - Double(i) * 0.18)
+                    Circle()
+                        .frame(width: 4.5 * u, height: 4.5 * u)
+                        .opacity(0.25 + 0.75 * v)
+                        .offset(y: -2.5 * u * v)
+                }
+            }
+        }
+    }
+
+    /* 0 at rest, up to 1 a third of the way through each 1.2 s and back. */
+    static func blink(_ time: Double) -> CGFloat {
+        var phase = time.truncatingRemainder(dividingBy: 1.2) / 1.2
+        if phase < 0 { phase += 1 }
+        let x: Double
+        if phase < 0.35 {
+            x = phase / 0.35
+        } else if phase < 0.7 {
+            x = 1 - (phase - 0.35) / 0.35
+        } else {
+            x = 0
+        }
+        return CGFloat(x * x * (3 - 2 * x))                      // ease in and out
+    }
+}
+
+/* Words one after another, wrapping like text. */
+struct FlowLayout: Layout {
+    var spacing: CGFloat
+    var lineHeight: CGFloat
+
+    private func arrange(_ subviews: Subviews, width: CGFloat) -> (size: CGSize, origins: [CGPoint]) {
+        var origins: [CGPoint] = []
+        var x: CGFloat = 0, y: CGFloat = 0, widest: CGFloat = 0
+        for s in subviews {
+            let size = s.sizeThatFits(ProposedViewSize(width: width, height: nil))
+            if x > 0 && x + spacing + size.width > width + 0.5 {
+                widest = max(widest, x)
+                x = 0
+                y += lineHeight
+            }
+            if x > 0 { x += spacing }
+            origins.append(CGPoint(x: x, y: y + (lineHeight - size.height) / 2))
+            x += size.width
+        }
+        return (CGSize(width: max(widest, x), height: y + lineHeight), origins)
+    }
+
+    func sizeThatFits(proposal: ProposedViewSize, subviews: Subviews, cache: inout ()) -> CGSize {
+        arrange(subviews, width: proposal.width ?? .greatestFiniteMagnitude).size
+    }
+
+    func placeSubviews(in bounds: CGRect, proposal: ProposedViewSize, subviews: Subviews, cache: inout ()) {
+        let placed = arrange(subviews, width: bounds.width)
+        for (s, origin) in zip(subviews, placed.origins) {
+            s.place(at: CGPoint(x: bounds.minX + origin.x, y: bounds.minY + origin.y),
+                    proposal: ProposedViewSize(width: bounds.width, height: nil))
+        }
+    }
+}
