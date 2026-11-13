@@ -1,0 +1,6 @@
+# Made by tools/prepare.py and XcodeGen on every build
+RSL/Generated/
+RSL/Info.plist
+RSL.xcodeproj/
+build/
+out/
