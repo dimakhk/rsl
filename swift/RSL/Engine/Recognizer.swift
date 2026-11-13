@@ -218,6 +218,7 @@ struct Rule {
     }
 
     mutating func judge(label: String, confidence: Float, stride: Int) -> Verdict {
+        if label == Rule.blank && confidence >= Rule.threshold { lastAccepted = nil }
         let need = stride <= Rule.dense ? 2 : 1
         let confident = confidence >= Rule.threshold && label != Rule.blank
         if confident && label == streakLabel {
@@ -286,7 +287,6 @@ final class Recognizer {
     private var rule = Rule()
 
     private let inferQueue = DispatchQueue(label: "rsl.infer", qos: .userInitiated)
-    private let tuneQueue = DispatchQueue(label: "rsl.tune", qos: .utility)
 
     var ready: Bool { model != nil }
 
@@ -311,12 +311,13 @@ final class Recognizer {
         model = loaded
         stats.ready = true
         stats.engine = loaded.engine
-        tuneQueue.async { [weak self] in
+        inferQueue.async { [weak self] in
             let trial = loaded.tryCoreML()
             NSLog("RSL: CPU %.0f ms, Core ML %.0f ms, agrees %d, switched %d %@",
                   trial.cpuMs, trial.coreMLMs, trial.agrees ? 1 : 0, trial.switched ? 1 : 0, trial.note)
-            self?.engineNote = String(format: "ЦП %.0f мс · Core ML %.0f мс%@", trial.cpuMs, trial.coreMLMs,
+            let note = String(format: "ЦП %.0f мс · Core ML %.0f мс%@", trial.cpuMs, trial.coreMLMs,
                                       trial.note.isEmpty ? (trial.agrees ? "" : " · ответы расходятся") : " · " + trial.note)
+            self?.callbackQueue.async { self?.engineNote = note }
         }
     }
 

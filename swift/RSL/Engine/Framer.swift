@@ -137,6 +137,7 @@ final class Framer {
     /* Read and written on the queue the frames arrive on. */
     private(set) var framing = Framing()
     private var busy = false
+    private var generation = 0
     private var lastRun: Double = 0
     private let poseQueue = DispatchQueue(label: "rsl.pose", qos: .userInitiated)
     private let request = VNDetectHumanBodyPoseRequest()
@@ -152,6 +153,7 @@ final class Framer {
         guard !busy, now - lastRun >= Framer.everyMs else { return }
         lastRun = now
         busy = true
+        let run = generation
         let width = CGFloat(CVPixelBufferGetWidth(buffer)), height = CGFloat(CVPixelBufferGetHeight(buffer))
         let home = callbackQueue
         poseQueue.async { [weak self] in
@@ -159,12 +161,15 @@ final class Framer {
             let points = Framer.detect(buffer, request: self.request)
             home.async {
                 self.busy = false
+                guard run == self.generation else { return }
                 self.framing.digest(points, width: width, height: height, now: now)
             }
         }
     }
 
     func reset(now: Double) {
+        generation += 1
+        lastRun = 0
         framing.reset(now: now)
     }
 

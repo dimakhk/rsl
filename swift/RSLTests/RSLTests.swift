@@ -237,6 +237,13 @@ final class FramingTests: XCTestCase {
 }
 
 final class RuleTests: XCTestCase {
+    func testSameWordCanReturnAfterBlank() {
+        var rule = Rule()
+        XCTAssertEqual(rule.judge(label: "дом", confidence: 0.95, stride: 8), .accepted(word: "дом"))
+        XCTAssertEqual(rule.judge(label: "дом", confidence: 0.95, stride: 8), .accepted(word: nil))
+        XCTAssertEqual(rule.judge(label: "no", confidence: 0.99, stride: 8), .nothing)
+        XCTAssertEqual(rule.judge(label: "дом", confidence: 0.95, stride: 8), .accepted(word: "дом"))
+    }
     func testTwoWindowsInARowWhenWindowsAreDense() {
         var rule = Rule()
         XCTAssertEqual(rule.judge(label: "дом", confidence: 0.8, stride: 8), .nothing)
@@ -350,5 +357,60 @@ final class DrawingTests: XCTestCase {
         for _ in 0..<240 { spring.step(1.0 / 60) }
         XCTAssertEqual(spring.value, 3)
         XCTAssertTrue(spring.settled)
+    }
+}
+
+final class ReliabilityTests: XCTestCase {
+    func testCloudRejectsUnsafeConfigurationAndLabels() {
+        XCTAssertNil(Cloud.parse(Data(#"{"url":"ws://example.com/ws"}"#.utf8)))
+        XCTAssertNil(Cloud.parse(Data(#"{"url":"wss://user:password@example.com/ws"}"#.utf8)))
+        XCTAssertNotNil(Cloud.parse(Data(#"{"url":"wss://example.com/ws"}"#.utf8)))
+        XCTAssertFalse(Cloud.validLabel(String(repeating: "а", count: 121)))
+        XCTAssertFalse(Cloud.validLabel(" "))
+        XCTAssertFalse(Cloud.validLabel("привет\n"))
+        XCTAssertTrue(Cloud.validLabel("до свидания"))
+    }
+
+    func testDamagedHistoryIsNotOverwritten() throws {
+        let dir = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
+        try FileManager.default.createDirectory(at: dir, withIntermediateDirectories: true)
+        defer { try? FileManager.default.removeItem(at: dir) }
+        let file = dir.appendingPathComponent("chats.json")
+        let damaged = Data("broken history".utf8)
+        try damaged.write(to: file)
+        let store = ChatStore(file: file)
+        XCTAssertTrue(store.load().isEmpty)
+        XCTAssertNotNil(store.warning)
+        let done = expectation(description: "save rejected")
+        store.save([StoredChat(lines: [.init(right: false, text: "new")])]) { error in
+            XCTAssertNotNil(error)
+            done.fulfill()
+        }
+        wait(for: [done], timeout: 5)
+        XCTAssertEqual(try Data(contentsOf: file), damaged)
+    }
+
+    func testHistoryBackupRecoveryAndOrderedWrites() throws {
+        let dir = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
+        try FileManager.default.createDirectory(at: dir, withIntermediateDirectories: true)
+        defer { try? FileManager.default.removeItem(at: dir) }
+        let file = dir.appendingPathComponent("chats.json")
+        let store = ChatStore(file: file)
+        XCTAssertTrue(store.load().isEmpty)
+        let first = StoredChat(lines: [.init(right: false, text: "first")])
+        let second = StoredChat(lines: [.init(right: true, text: "second")])
+        let done = expectation(description: "ordered saves")
+        done.expectedFulfillmentCount = 2
+        store.save([first]) { XCTAssertNil($0); done.fulfill() }
+        store.save([first, second]) { XCTAssertNil($0); done.fulfill() }
+        wait(for: [done], timeout: 5)
+        XCTAssertEqual(ChatStore(file: file).load().map(\.id), [first.id, second.id])
+        try Data("damaged".utf8).write(to: file)
+        let recovered = ChatStore(file: file)
+        let rows = recovered.load()
+        XCTAssertEqual(rows.map(\.id), [first.id])
+        XCTAssertNotNil(recovered.warning)
+        let names = try FileManager.default.contentsOfDirectory(atPath: dir.path)
+        XCTAssertTrue(names.contains { $0.contains(".damaged-") })
     }
 }

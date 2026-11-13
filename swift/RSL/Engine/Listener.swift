@@ -31,6 +31,9 @@ final class Listener {
     private let recognizer = SFSpeechRecognizer(locale: Locale(identifier: "ru-RU"))
     private let engine = AVAudioEngine()
     private var request: SFSpeechAudioBufferRecognitionRequest?
+    private let requestLock = NSLock()
+    private var authorizationRound = 0
+    private var observers: [NSObjectProtocol] = []
     private var task: SFSpeechRecognitionTask?
     private var wanted = false
     private var tapped = false
@@ -41,19 +44,39 @@ final class Listener {
     private var onDevice = true                  // recognise on the device where it can
     private static let nothingSaid = 1110        // the recogniser's code for "no speech in the sound"
 
+    init() {
+        for name in [AVAudioSession.interruptionNotification, AVAudioSession.routeChangeNotification] {
+            observers.append(NotificationCenter.default.addObserver(forName: name, object: nil, queue: .main) { [weak self] notification in
+                guard let self = self, self.wanted else { return }
+                if name == AVAudioSession.interruptionNotification,
+                   let type = notification.userInfo?[AVAudioSessionInterruptionTypeKey] as? UInt,
+                   type != AVAudioSession.InterruptionType.began.rawValue { return }
+                if name == AVAudioSession.routeChangeNotification,
+                   let reason = notification.userInfo?[AVAudioSessionRouteChangeReasonKey] as? UInt,
+                   reason != AVAudioSession.RouteChangeReason.oldDeviceUnavailable.rawValue { return }
+                self.fail(.unavailable)
+            })
+        }
+    }
+
+    deinit { observers.forEach(NotificationCenter.default.removeObserver) }
+
     /* Asks for access if it has not been asked yet, then listens. */
     func start() {
+        authorizationRound += 1
+        let authorization = authorizationRound
         wanted = true
         failures = 0
         onDevice = true
         Listener.authorize { [weak self] allowed in
-            guard let self = self, self.wanted else { return }
+            guard let self = self, self.wanted, self.authorizationRound == authorization else { return }
             guard allowed else { return self.fail(.denied) }
             self.listen()
         }
     }
 
     func stop() {
+        authorizationRound += 1
         wanted = false
         quiet?.cancel()
         finish()
@@ -62,7 +85,7 @@ final class Listener {
             engine.inputNode.removeTap(onBus: 0)
             tapped = false
         }
-        try? AVAudioSession.sharedInstance().setCategory(.playback, mode: .spokenAudio, options: [.duckOthers])
+        try? AVAudioSession.sharedInstance().setActive(false, options: [.notifyOthersOnDeactivation])
     }
 
     private static func authorize(_ done: @escaping (Bool) -> Void) {
@@ -95,7 +118,10 @@ final class Listener {
         guard format.sampleRate > 0, format.channelCount > 0 else { return fail(.unavailable) }
         if !tapped {
             input.installTap(onBus: 0, bufferSize: 1024, format: format) { [weak self] buffer, _ in
-                self?.request?.append(buffer)
+                guard let self = self else { return }
+                self.requestLock.lock()
+                self.request?.append(buffer)
+                self.requestLock.unlock()
             }
             tapped = true
         }
@@ -120,7 +146,9 @@ final class Listener {
         let local = onDevice && recognizer.supportsOnDeviceRecognition
         next.requiresOnDeviceRecognition = local
         note = local ? "речь: на устройстве" : "речь: через сервер Apple"
+        requestLock.lock()
         request = next
+        requestLock.unlock()
         task = recognizer.recognitionTask(with: next) { [weak self] result, error in
             DispatchQueue.main.async {
                 guard let self = self, mine == self.round else { return }
@@ -142,7 +170,7 @@ final class Listener {
 
     private func waitForQuiet() {
         quiet?.cancel()
-        let item = DispatchWorkItem { [weak self] in self?.request?.endAudio() }     // the final text follows
+        let item = DispatchWorkItem { [weak self] in self?.endAudio() }     // the final text follows
         quiet = item
         DispatchQueue.main.asyncAfter(deadline: .now() + Listener.pause, execute: item)
     }
@@ -170,11 +198,19 @@ final class Listener {
         }
     }
 
+    private func endAudio() {
+        requestLock.lock()
+        request?.endAudio()
+        requestLock.unlock()
+    }
+
     private func finish() {
         round += 1
+        requestLock.lock()
         request?.endAudio()
-        task?.cancel()
         request = nil
+        requestLock.unlock()
+        task?.cancel()
         task = nil
         heard = ""
     }

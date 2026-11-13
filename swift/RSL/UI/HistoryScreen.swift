@@ -172,6 +172,9 @@ struct WheelView: View {
                         .offset(y: row.y * u)
                         .opacity(row.alpha)
                         .accessibilityAddTraits(row.selected ? [.isButton, .isSelected] : .isButton)
+                        .accessibilityAction {
+                            if let index = wheel.rows.firstIndex(where: { $0.id == row.id }) { onChoose(index) }
+                        }
                 }
             }
             .frame(width: geo.size.width, height: geo.size.height)
@@ -254,6 +257,7 @@ struct WheelView: View {
 }
 
 struct HistoryScreen: View {
+    @State private var cloudSettings = false
     @ObservedObject var model: ChatModel
     @StateObject private var wheel = WheelModel()
     @Environment(\.metrics) private var m
@@ -298,6 +302,11 @@ struct HistoryScreen: View {
                 .place(x: 0, y: m.top + 70 * u, width: m.width,
                        height: max(0, m.height - m.top - m.bottom - 140 * u))
 
+            Button("Облачный сервер") { cloudSettings = true }
+                .font(Typeface.font(14 * u))
+                .place(x: 40 * u, y: m.height - m.bottom - 100 * u,
+                       width: m.width - 80 * u, height: 44 * u)
+
             // Required by the licences of the models. Plain text on purpose.
             Text("Модели: SignFlow-R · SberDevices, hukenovs/slovo · S3D · ai-forever/easy_sign · CC BY-SA 4.0")
                 .golos(11, line: 15, u: u)
@@ -311,6 +320,9 @@ struct HistoryScreen: View {
         }
         .foregroundStyle(Palette.wine)
         .frame(width: m.width, height: m.height)
+        .sheet(isPresented: $cloudSettings) {
+            CloudSettings { model.capture.reloadCloud() }
+        }
         .onAppear {
             wheel.reduceMotion = reduce
             wheel.build(model.chatTitles, current: model.current)

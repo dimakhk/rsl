@@ -31,6 +31,10 @@ final class Speaker: NSObject, AVSpeechSynthesizerDelegate {
 
     private(set) var voice: Voice
     private let synthesizer = AVSpeechSynthesizer()
+    private var pending = 0
+
+    func speechSynthesizer(_ synthesizer: AVSpeechSynthesizer, didFinish utterance: AVSpeechUtterance) { pending = max(0, pending - 1) }
+    func speechSynthesizer(_ synthesizer: AVSpeechSynthesizer, didCancel utterance: AVSpeechUtterance) { pending = max(0, pending - 1) }
     private static let key = "voice"
 
     override init() {
@@ -68,7 +72,7 @@ final class Speaker: NSObject, AVSpeechSynthesizerDelegate {
     /* Queued behind whatever is being said. `force` says it even with the
        sound off (the voice introducing itself when it is chosen). */
     func say(_ text: String, force: Bool = false) {
-        let clean = text.trimmingCharacters(in: .whitespacesAndNewlines)
+        let clean = String(text.prefix(4000)).trimmingCharacters(in: .whitespacesAndNewlines)
         guard !clean.isEmpty, !muted, enabled || force else { return }
         Speaker.playbackSession()
         let utterance = AVSpeechUtterance(string: clean)
@@ -76,6 +80,8 @@ final class Speaker: NSObject, AVSpeechSynthesizerDelegate {
         utterance.rate = AVSpeechUtteranceDefaultSpeechRate
         utterance.preUtteranceDelay = 0
         utterance.postUtteranceDelay = 0
+        if pending >= 8 { return }
+        pending += 1
         synthesizer.speak(utterance)
     }
 
@@ -87,7 +93,7 @@ final class Speaker: NSObject, AVSpeechSynthesizerDelegate {
        somebody who speaks through this app, silence is the app not working. */
     static func playbackSession() {
         let session = AVAudioSession.sharedInstance()
-        guard session.category != .playback && session.category != .playAndRecord else { return }
+        guard session.category != .playAndRecord else { return }
         try? session.setCategory(.playback, mode: .spokenAudio, options: [.duckOthers])
         try? session.setActive(true)
     }

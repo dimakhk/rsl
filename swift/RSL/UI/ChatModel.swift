@@ -54,6 +54,7 @@ struct Message: Identifiable, Equatable {
 }
 
 final class ChatModel: ObservableObject {
+    @Published var problem: String?
     @Published private(set) var mode = Mode.idle
     @Published private(set) var sound: Bool
     @Published private(set) var voice: Speaker.Voice
@@ -114,6 +115,7 @@ final class ChatModel: ObservableObject {
         all.append(StoredChat())
         chats = all
         current = all.count - 1
+        problem = store.warning
         let soundOn = UserDefaults.standard.object(forKey: "sound") == nil ? true : UserDefaults.standard.bool(forKey: "sound")
         sound = soundOn
         voice = .milena
@@ -132,15 +134,27 @@ final class ChatModel: ObservableObject {
         // Hints for the person in front of the camera («Подойдите ближе» ...)
         // are switched off for now. Capture still works them out (onMessage).
         capture.onPerson = { [weak self] seen in self?.personSeen = seen }
+        capture.onMessage = { [weak self] message in
+            guard let message = message,
+                  message == "Нет доступа к камере" || message == "Камера недоступна" ||
+                  message == "Камера отключилась" || message == "Не удалось загрузить распознавание"
+            else { return }
+            self?.problem = message
+        }
         capture.onCamera = { [weak self] on in self?.cameraReady = on }
         capture.onPicture = { [weak self] light in self?.pictureIsLight = light }
 
         listener.onText = { [weak self] text in self?.heard(text, complete: false) }
         listener.onRemark = { [weak self] text in self?.heard(text, complete: true) }
-        listener.onStopped = { [weak self] _ in
+        listener.onStopped = { [weak self] failure in
             // No access, or no recogniser: the mode has nothing to do.
             guard let self = self, self.mode == .voice else { return }
             self.setMode(.idle)
+            if let failure = failure {
+                self.problem = failure == .denied
+                    ? "Разрешите доступ к микрофону и распознаванию речи в Настройках iPhone."
+                    : "Голосовой ввод прерван. Проверьте микрофон и попробуйте снова."
+            }
         }
 
         // The chat is written down a moment after it changes, and when the app is left.
@@ -148,7 +162,10 @@ final class ChatModel: ObservableObject {
             .debounce(for: .milliseconds(600), scheduler: RunLoop.main)
             .sink { [weak self] _ in self?.keep() }
         leaving = NotificationCenter.default.addObserver(
-            forName: UIApplication.willResignActiveNotification, object: nil, queue: .main) { [weak self] _ in
+            forName: UIApplication.didEnterBackgroundNotification, object: nil, queue: .main) { [weak self] _ in
+                self?.setMode(.idle)
+                self?.capture.stop()
+                self?.speaker.stop()
                 self?.keep()
             }
     }
@@ -266,7 +283,7 @@ final class ChatModel: ObservableObject {
        bubble on the left with three dots. A word keeps its place while it
        changes; only a new word arrives. Empty text takes the bubble away. */
     private func write(_ text: String, into id: inout UUID?) {
-        let parts = Message.split(text)
+        let parts = Message.split(String(text.prefix(4000)))
         if parts.isEmpty {
             if id != nil {
                 remove(id)
@@ -367,13 +384,22 @@ final class ChatModel: ObservableObject {
         let lines = messages.filter { !$0.words.isEmpty }.map {
             StoredChat.Line(right: $0.side == .right, text: $0.text)
         }
-        if chats[current].lines != lines { chats[current].lines = lines }
-        store.save(chats)
+        guard chats[current].lines != lines else { return }
+        chats[current].lines = lines
+        var task = UIBackgroundTaskIdentifier.invalid
+        task = UIApplication.shared.beginBackgroundTask {
+            if task != .invalid { UIApplication.shared.endBackgroundTask(task); task = .invalid }
+        }
+        store.save(chats) { [weak self] error in
+            if let error = error { self?.problem = error }
+            if task != .invalid { UIApplication.shared.endBackgroundTask(task); task = .invalid }
+        }
     }
 
     func openHistory() {
         if historyOpen { return }
         setMode(.idle)
+        speaker.stop()
         keep()
         historyOpen = true
     }
@@ -389,6 +415,7 @@ final class ChatModel: ObservableObject {
     func openChat(_ index: Int) {
         guard chats.indices.contains(index) else { return }
         setMode(.idle)
+        speaker.stop()
         if index != current {
             keep()
             let was = current

@@ -88,6 +88,11 @@ struct RootView: View {
 
     var body: some View {
         screen
+        .alert("Сообщение", isPresented: Binding(
+            get: { model.problem != nil },
+            set: { if !$0 { model.problem = nil } })) {
+                Button("Понятно", role: .cancel) { model.problem = nil }
+            } message: { Text(model.problem ?? "") }
         .preferredColorScheme(lightStatusBar ? .dark : .light)
         .onAppear {
             model.reduceMotion = reduce

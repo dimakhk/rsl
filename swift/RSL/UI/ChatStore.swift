@@ -64,32 +64,69 @@ enum ChatTitle {
 
 final class ChatStore {
     private let file: URL?
+    private let queue = DispatchQueue(label: "rsl.chats", qos: .utility)
+    private var writable = true
+    private(set) var warning: String?
 
-    /* `persistent: false` keeps nothing on disk (tests, screenshots). */
     init(persistent: Bool) {
-        if persistent, let dir = FileManager.default.urls(for: .applicationSupportDirectory, in: .userDomainMask).first {
-            try? FileManager.default.createDirectory(at: dir, withIntermediateDirectories: true)
-            file = dir.appendingPathComponent("chats.json")
-        } else {
-            file = nil
+        file = persistent ? FileManager.default.urls(for: .applicationSupportDirectory,
+            in: .userDomainMask).first?.appendingPathComponent("chats.json") : nil
+    }
+
+    init(file: URL) { self.file = file }
+
+    private func decode(_ url: URL) throws -> [StoredChat] {
+        let decoder = JSONDecoder()
+        decoder.dateDecodingStrategy = .iso8601
+        return try decoder.decode([StoredChat].self, from: Data(contentsOf: url))
+            .filter { !$0.isEmpty }.sorted { $0.started < $1.started }
+    }
+
+    func load() -> [StoredChat] {
+        guard let file = file else { return [] }
+        return queue.sync {
+            guard FileManager.default.fileExists(atPath: file.path) else { return [] }
+            do { return try decode(file) } catch {
+                // Keep the unreadable original before allowing any replacement.
+                do {
+                    let recovered = try decode(file.appendingPathExtension("backup"))
+                    try FileManager.default.copyItem(at: file,
+                        to: file.appendingPathExtension("damaged-" + UUID().uuidString))
+                    warning = "История восстановлена из резервной копии. Повреждённый файл сохранён."
+                    return recovered
+                } catch {
+                    writable = false
+                    warning = "Не удалось прочитать историю. Исходный файл сохранён. Новые чаты пока не сохраняются."
+                    return []
+                }
+            }
         }
     }
 
-    /* The chats that have something in them, oldest first. */
-    func load() -> [StoredChat] {
-        guard let file = file, let data = try? Data(contentsOf: file) else { return [] }
-        let decoder = JSONDecoder()
-        decoder.dateDecodingStrategy = .iso8601
-        let chats = (try? decoder.decode([StoredChat].self, from: data)) ?? []
-        return chats.filter { !$0.isEmpty }.sorted { $0.started < $1.started }
-    }
-
-    func save(_ chats: [StoredChat]) {
-        guard let file = file else { return }
-        let encoder = JSONEncoder()
-        encoder.dateEncodingStrategy = .iso8601
-        encoder.outputFormatting = [.prettyPrinted]
-        guard let data = try? encoder.encode(chats.filter { !$0.isEmpty }) else { return }
-        try? data.write(to: file, options: .atomic)
+    func save(_ chats: [StoredChat], completion: @escaping (String?) -> Void) {
+        queue.async {
+            var failure: String?
+            do {
+                if let file = self.file {
+                    guard self.writable else {
+                        DispatchQueue.main.async { completion(self.warning) }
+                        return
+                    }
+                    let fm = FileManager.default
+                    try fm.createDirectory(at: file.deletingLastPathComponent(), withIntermediateDirectories: true)
+                    let encoder = JSONEncoder()
+                    encoder.dateEncodingStrategy = .iso8601
+                    let data = try encoder.encode(chats.filter { !$0.isEmpty })
+                    if fm.fileExists(atPath: file.path), (try? self.decode(file)) != nil {
+                        let old = try Data(contentsOf: file)
+                        try old.write(to: file.appendingPathExtension("backup"), options: [.atomic, .completeFileProtectionUntilFirstUserAuthentication])
+                    }
+                    try data.write(to: file, options: [.atomic, .completeFileProtectionUntilFirstUserAuthentication])
+                }
+            } catch {
+                failure = "Не удалось сохранить историю. Проверьте свободное место на устройстве."
+            }
+            DispatchQueue.main.async { completion(failure) }
+        }
     }
 }

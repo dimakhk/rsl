@@ -45,6 +45,9 @@ final class Capture {
     private lazy var cloud = Cloud(queue: frames)
 
     // State below is touched only on `frames`.
+    private var switching = false
+    private var cameraGeneration = 0
+    private var prepared = false
     private var wanted = false                   // the interface wants recognition on
     private var cameraOn = false
     private var capturing = false
@@ -65,6 +68,8 @@ final class Capture {
     /* Call once. Loading and warming up the model takes a second or two, so
        it starts right away. */
     func prepare() {
+        guard !prepared else { return }
+        prepared = true
         recognizer.callbackQueue = frames
         framer.callbackQueue = frames
         recognizer.onWord = { [weak self] word in
@@ -110,6 +115,13 @@ final class Capture {
         }
         frames.async { self.loadModel() }
         cloud.start(packed: Bundle.main.url(forResource: "server", withExtension: "json"))
+    }
+
+    func reloadCloud() {
+        frames.async {
+            self.cloud.stop()
+            self.cloud.start(packed: Bundle.main.url(forResource: "server", withExtension: "json"))
+        }
     }
 
     private static func now() -> Double { CFAbsoluteTimeGetCurrent() * 1000 }
@@ -202,7 +214,7 @@ final class Capture {
     private func frame(_ buffer: CVPixelBuffer) {
         let width = CGFloat(CVPixelBufferGetWidth(buffer)), height = CGFloat(CVPixelBufferGetHeight(buffer))
         watchPicture(buffer, width: width, height: height)
-        guard capturing else { return }
+        guard capturing, !switching else { return }
         let now = Capture.now()
         if now < captureSince { return }                 // the screen's transition is still playing
         framer.update(buffer, now: now)
@@ -210,7 +222,7 @@ final class Capture {
         let online = cloud.online
         if online != usingCloud {                        // the server came or went: start clean
             usingCloud = online
-            if online { cloud.begin() } else if modelState == .ready { recognizer.start() }
+            if online { recognizer.stop() } else if modelState == .ready { recognizer.start() }
         }
         if online {
             cloud.push(buffer, crop: crop)
@@ -234,6 +246,7 @@ final class Capture {
         // video before it can say anything anyway.
         captureSince = Capture.now() + 450
         framer.reset(now: captureSince)
+        cloud.begin()
     }
 
     private func halt() {
@@ -299,10 +312,20 @@ final class Capture {
 
     /* The front or the back camera. The recognisers start clean on the new picture. */
     func useCamera(_ side: Camera.Side) {
-        camera.use(side)
         frames.async {
-            self.framer.reset(now: Capture.now())
-            self.usingCloud = nil
+            self.cameraGeneration += 1
+            let change = self.cameraGeneration
+            self.switching = true
+            self.halt()
+            self.camera.use(side) { success in
+                self.frames.async {
+                    guard change == self.cameraGeneration else { return }
+                    self.switching = false
+                    self.framer.reset(now: Capture.now())
+                    if !success { self.setIssue("camera", "Камера недоступна") }
+                    if self.wanted && self.cameraOn { self.beginCapture() }
+                }
+            }
         }
     }
 

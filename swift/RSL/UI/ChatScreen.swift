@@ -242,6 +242,7 @@ struct BubbleRow: View {
 }
 
 struct FeedView: View {
+    @State private var following = true
     @ObservedObject var model: ChatModel
     let height: CGFloat
     @Environment(\.metrics) private var m
@@ -251,7 +252,7 @@ struct FeedView: View {
         let u = m.u
         ScrollViewReader { proxy in
             ScrollView(.vertical, showsIndicators: false) {
-                VStack(spacing: 12 * u) {
+                LazyVStack(spacing: 12 * u) {
                     ForEach(model.messages) { message in
                         BubbleRow(message: message)
                             // A bubble grows out of its tail.
@@ -262,12 +263,16 @@ struct FeedView: View {
                 .padding(.top, 53 * u)
                 .padding(.bottom, 18 * u)
                 .frame(width: m.width)
-                Color.clear.frame(height: 0).id("end")
+                Color.clear.frame(height: 1).id("end")
+                    .onAppear { following = true }
+                    .onDisappear { following = false }
             }
             // With the keyboard up: a swipe down the messages puts it away...
             .scrollDismissesKeyboard(.interactively)
             .onChange(of: model.messages) { _, _ in
-                withAnimation(Motion.pick(Motion.soft, reduce: reduce)) { proxy.scrollTo("end", anchor: .bottom) }
+                if following {
+                    withAnimation(Motion.pick(Motion.soft, reduce: reduce)) { proxy.scrollTo("end", anchor: .bottom) }
+                }
             }
             .onChange(of: height) { _, _ in
                 proxy.scrollTo("end", anchor: .bottom)
@@ -343,7 +348,14 @@ struct KeyboardInput: UIViewRepresentable {
         func textView(_ view: UITextView, shouldChangeTextIn range: NSRange, replacementText text: String) -> Bool {
             if text == "\n" {
                 model.sendTyped()
+                cleared = model.fieldCleared
                 view.text = ""
+                return false
+            }
+            let current = view.text ?? ""
+            guard let replacement = Range(range, in: current) else { return false }
+            if current.replacingCharacters(in: replacement, with: text).count > 4000 {
+                model.problem = "Сообщение может содержать до 4000 символов."
                 return false
             }
             return true

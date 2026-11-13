@@ -66,11 +66,12 @@ final class Camera: NSObject, AVCaptureVideoDataOutputSampleBufferDelegate {
 
     /* The other camera. If the camera is running it is swapped on the spot;
        if not, the choice is kept for the next start. */
-    func use(_ wanted: Side) {
+    func use(_ wanted: Side, done: @escaping (Bool) -> Void) {
         sessionQueue.async {
-            guard wanted != self.side else { return }
-            self.side = wanted
-            if self.configured { _ = self.install(wanted) }
+            guard wanted != self.side else { done(true); return }
+            let success = !self.configured || self.install(wanted)
+            if success { self.side = wanted }
+            done(success)
         }
     }
 

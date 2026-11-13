@@ -32,6 +32,7 @@ targets:
     info:
       path: RSL/Info.plist
       properties:
+        CFBundleVersion: "$(CURRENT_PROJECT_VERSION)"
         CFBundleDisplayName: РЖЯ
         CFBundleDevelopmentRegion: ru
         CFBundleAllowMixedLocalizations: true
