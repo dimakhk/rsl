@@ -1,6 +1,6 @@
 # Собирает приложение для iPhone (папка swift/): проверяет его тестами в
 # симуляторе - в том числе нажимает все кнопки, - снимает экраны и делает
-# файл .ipa без подписи. Подпись ставит Sideloadly при установке
+# файл .ipa с технической подписью. Подпись Apple ID ставит установщик
 # (docs/ios-install.md).
 #
 # Запускается только:
@@ -28,7 +28,7 @@ concurrency:
 
 jobs:
   build:
-    name: Test, screenshots, unsigned .ipa
+    name: Test, screenshots, re-signable .ipa
     runs-on: macos-26
     timeout-minutes: 60
 
@@ -158,6 +158,13 @@ jobs:
         run: |
           mkdir -p out/Payload
           cp -R swift/build/Build/Products/Release-iphoneos/RSL.app out/Payload/
+          app=out/Payload/RSL.app
+          # iPASide replaces an existing Mach-O signature when signing with Apple ID.
+          # Use a local ad-hoc signature so CI needs no certificate or profile.
+          find "$app/Frameworks" -depth -name '*.framework' -type d \
+            -exec codesign --force --sign - {} \;
+          codesign --force --sign - "$app"
+          codesign --verify --deep --strict --verbose=2 "$app"
           cd out
           zip -qry RSL.ipa Payload
           ls -lh RSL.ipa
