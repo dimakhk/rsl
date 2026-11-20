@@ -165,6 +165,11 @@ final class RSLUITests: XCTestCase {
         let flip = app.buttons["Сменить камеру"]
         XCTAssertFalse(flip.isHittable, "the camera button is on screen outside the gesture mode")
         button("Жесты").tap()
+        // The simulator has no camera. Verify the error and dismiss it before
+        // checking the camera switch control.
+        let acknowledge = app.alerts.buttons["Понятно"]
+        XCTAssertTrue(acknowledge.waitForExistence(timeout: 10), "camera unavailability was not shown")
+        acknowledge.tap()
         XCTAssertTrue(wait(flip, "hittable == true"), "no camera button in the gesture mode")
         XCTAssertEqual(flip.value as? String, "передняя")
         flip.tap()
