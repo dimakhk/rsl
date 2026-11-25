@@ -8,11 +8,8 @@ import Foundation
    good at - camera, finding the person, cropping - and sends small frames;
    the server answers with words.
 
-   Which server: the "url" in server.json. The copy on the site is asked
-   first, because the server's address does change and the copy packed into
-   the app is as old as the build; the packed one is for when the site does
-   not answer. No server, or the connection drops: the app carries on with
-   the model in the device, and comes back to the server when it answers.
+   The build bundles the server address and demo credential together.
+   If unavailable, recognition continues on the device.
 
    Frames: the crop, letterboxed into 224x224 on grey as the model was
    trained, JPEG, 15 a second - SignFlow-R reads every second frame of a
@@ -79,25 +76,16 @@ final class Cloud: NSObject, URLSessionWebSocketDelegate {
     /* Reads server.json and connects. Without a server configured this does
        nothing and the app stays on the device's model. */
     func start(packed: URL?) {
-        if let saved = UserDefaults.standard.string(forKey: "cloudEndpoint"),
-           let address = URL(string: saved), address.scheme == "wss" {
-            queue.async { self.url = address; if self.running { self.connect() } }
-            return
+        guard let packed = packed,
+              let data = try? Data(contentsOf: packed),
+              let config = Cloud.parse(data),
+              let credential = CloudCredential.read() else { return }
+        queue.async {
+            self.url = config.url
+            self.token = credential
+            self.stats.model = config.model
+            if self.running { self.connect() }
         }
-        var request = URLRequest(url: Cloud.site, cachePolicy: .reloadIgnoringLocalAndRemoteCacheData, timeoutInterval: 4)
-        request.httpMethod = "GET"
-        let lookup = URLSession(configuration: .ephemeral).dataTask(with: request) { [weak self] data, response, _ in
-            var config = Cloud.parse(data)
-            if (response as? HTTPURLResponse)?.statusCode != 200 { config = nil }
-            if config == nil, let packed = packed { config = Cloud.parse(try? Data(contentsOf: packed)) }
-            guard let self = self, let found = config else { return }
-            self.queue.async {
-                self.url = found.url
-                self.stats.model = found.model
-                if self.running { self.connect() }
-            }
-        }
-        lookup.resume()
     }
 
     static func parse(_ data: Data?) -> (url: URL, model: String)? {
@@ -109,8 +97,7 @@ final class Cloud: NSObject, URLSessionWebSocketDelegate {
     }
 
     private func connect() {
-        guard running, let url = url, let credential = CloudCredential.read(host: url.host ?? "") else { return }
-        token = credential
+        guard running, let url = url, !token.isEmpty else { return }
         task?.cancel(with: .goingAway, reason: nil)
         var request = URLRequest(url: url)
         request.setValue("Bearer " + token, forHTTPHeaderField: "Authorization")
@@ -209,6 +196,12 @@ final class Cloud: NSObject, URLSessionWebSocketDelegate {
     }
 
     // MARK: URLSessionWebSocketDelegate (on `queue`)
+
+    func urlSession(_ session: URLSession, task: URLSessionTask,
+                    willPerformHTTPRedirection response: HTTPURLResponse,
+                    newRequest request: URLRequest, completionHandler: @escaping (URLRequest?) -> Void) {
+        completionHandler(nil)
+    }
 
     func urlSession(_ session: URLSession, webSocketTask: URLSessionWebSocketTask,
                     didOpenWithProtocol `protocol`: String?) {

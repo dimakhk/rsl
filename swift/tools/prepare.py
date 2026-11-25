@@ -5,7 +5,10 @@
 
 Run before XcodeGen:   python3 swift/tools/prepare.py
 """
+import json
 import os, re, shutil
+from pathlib import Path
+from urllib.parse import urlsplit
 
 HERE = os.path.dirname(os.path.abspath(__file__))
 SWIFT = os.path.join(HERE, "..")
@@ -14,7 +17,22 @@ os.makedirs(OUT, exist_ok=True)
 
 # server.json lives in the root of the repository: GitHub Pages serves it from
 # there, and the app asks that copy first.
-shutil.copy(os.path.join(SWIFT, "..", "server.json"), OUT)
+token_file = Path(OUT) / "cloud-token.txt"
+token_file.unlink(missing_ok=True)
+token = os.environ.get("RSL_DEMO_TOKEN", "")
+endpoint = os.environ.get("RSL_DEMO_URL", "")
+if token or endpoint:
+    address = urlsplit(endpoint)
+    if (not re.fullmatch(r"[A-Za-z0-9_-]{32,128}", token)
+            or address.scheme != "wss" or not address.hostname
+            or address.username is not None or address.password is not None
+            or address.path != "/ws" or address.query or address.fragment):
+        raise SystemExit("Invalid demo cloud configuration")
+    (Path(OUT) / "server.json").write_text(
+        json.dumps({"url": endpoint, "model": "SignFlow-R"}), encoding="utf-8")
+    token_file.write_text(token, encoding="utf-8")
+else:
+    shutil.copy(os.path.join(SWIFT, "..", "server.json"), OUT)
 
 def attr(tag, name, default=None):
     m = re.search(r'\b%s="([^"]*)"' % re.escape(name), tag)

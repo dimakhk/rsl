@@ -117,12 +117,6 @@ final class Capture {
         cloud.start(packed: Bundle.main.url(forResource: "server", withExtension: "json"))
     }
 
-    func reloadCloud() {
-        frames.async {
-            self.cloud.stop()
-            self.cloud.start(packed: Bundle.main.url(forResource: "server", withExtension: "json"))
-        }
-    }
 
     private static func now() -> Double { CFAbsoluteTimeGetCurrent() * 1000 }
 

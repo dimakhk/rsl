@@ -37,6 +37,9 @@ jobs:
 
       # Icons.swift from the SVG drawings, and the packed copy of server.json.
       - name: Prepare generated files
+        env:
+          RSL_DEMO_TOKEN: ${{ secrets.RSL_DEMO_TOKEN }}
+          RSL_DEMO_URL: ${{ vars.RSL_DEMO_URL }}
         run: python3 swift/tools/prepare.py
 
       - name: Write the Xcode project
